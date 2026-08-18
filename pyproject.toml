@@ -9,17 +9,24 @@ description = "Runtime data-flow authorization contracts and gateway foundation"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "TraceLock contributors" }]
-dependencies = []
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+]
+
+[project.scripts]
+tracelock = "tracelock_services.app:run"
 
 [project.optional-dependencies]
 dev = [
   "mypy>=1.10,<2",
   "pytest>=8,<9",
   "ruff>=0.6,<1",
+  "httpx>=0.27,<1",
 ]
 
 [tool.setuptools.packages.find]
-include = ["tracelock_core*"]
+include = ["tracelock_core*", "tracelock_services*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

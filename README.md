@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 1 — MVP boundary and repository foundation.**
+**Current phase: Phase 2 — local development environment and service skeleton.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -54,10 +54,14 @@ Classification is sticky: renaming a field, wrapping it in an array, batching re
 tracelock/
 ├── .github/workflows/       # Continuous integration
 ├── docs/                    # Architecture, scope, and decision records
-├── infra/docker/            # Local container assets, added in later phases
+├── infra/docker/            # Local container image definition
 ├── policies/                # Example policies and test fixtures
-├── tests/unit/              # Fast deterministic unit tests
+├── scripts/                 # Local development helpers
+├── services/                # Reserved service deployment boundaries
+├── tests/                   # Unit and integration tests
 ├── tracelock_core/          # Framework-independent domain contracts
+├── tracelock_services/      # Runnable local FastAPI service skeleton
+├── compose.yaml             # Local multi-service topology
 ├── pyproject.toml           # Python project metadata and tool configuration
 └── README.md                # Project charter and development guide
 ```
@@ -72,9 +76,36 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 1 exit criteria
+## Phase 2 implementation
 
-Phase 1 is complete when:
+Phase 2 provides one lightweight FastAPI application that can run under four explicit local roles: `gateway`, `workload`, `control-plane`, and `fake-destination`. The roles share the same intentionally minimal service contract for now, while Compose gives each role its own named container and network identity.
+
+The available endpoints are:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | Service metadata, role, environment, version, and current phase. |
+| `GET /health` | Basic process health check. |
+| `GET /v1/status` | Explicit capability report showing which later-phase features are not implemented yet. |
+
+Run one local role directly:
+
+```bash
+TRACELOCK_SERVICE_ROLE=gateway TRACELOCK_SERVICE_NAME=tracelock-gateway \\
+  ./scripts/run_local.sh
+```
+
+Or start the four-role local topology:
+
+```bash
+docker compose -f compose.yaml up --build
+```
+
+The gateway is exposed at `http://localhost:8000`. This is a development skeleton only; it does not authorize traffic, enforce network routing, persist events, evaluate policies, or provide production security guarantees.
+
+## Phase 2 exit criteria
+
+Phase 2 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -83,10 +114,13 @@ Phase 1 is complete when:
 - CI runs formatting, linting, type checking, and tests.
 - The MVP boundary and non-goals are explicit.
 - No secrets or production credentials are committed.
+- The local service package exposes health and status endpoints.
+- The Compose topology defines gateway, workload, control-plane, and fake-destination roles.
+- Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 1
+## Explicit non-goals for Phase 2
 
-Phase 1 does not implement network routing, a live gateway, identity verification, a database, a dashboard, policy signing, production provenance integrations, or redaction. Those capabilities are deliberately deferred to later phases.
+Phase 2 does not implement network routing, a live gateway, identity verification, a database, a dashboard, policy signing, production provenance integrations, or redaction. Those capabilities are deliberately deferred to later phases.
 
 ## Local development
 
