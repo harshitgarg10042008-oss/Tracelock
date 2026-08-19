@@ -55,3 +55,15 @@ def test_status_makes_unimplemented_capabilities_explicit() -> None:
         "persistence": False,
         "policy_evaluation": True,
     }
+
+
+def test_gateway_allows_control_center_cors_origin() -> None:
+    client = TestClient(create_app(ServiceConfig(environment="test")))
+
+    response = client.get(
+        "/health",
+        headers={"Origin": "http://localhost:3000"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"

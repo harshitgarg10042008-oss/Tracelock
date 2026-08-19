@@ -9,6 +9,7 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from tracelock_core.contracts import Classification
@@ -252,6 +253,18 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         title="TraceLock",
         version=runtime.version,
         description="Runtime data-flow authorization gateway.",
+    )
+    configured_origins = os.getenv(
+        "TRACELOCK_CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    allowed_origins = [origin.strip() for origin in configured_origins.split(",") if origin.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
     )
     app.state.config = runtime
     app.state.governance = governance

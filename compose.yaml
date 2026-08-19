@@ -10,6 +10,7 @@ services:
       TRACELOCK_SERVICE_ROLE: gateway
       TRACELOCK_ENVIRONMENT: local
       TRACELOCK_EVIDENCE_DB: /var/lib/tracelock/evidence.db
+      TRACELOCK_CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
     volumes:
       - evidence-data:/var/lib/tracelock
     ports:
