@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">TraceLock logo</title>
+  <desc id="desc">A lime secure lock with a flowing data signal.</desc>
+  <path fill="#D5F23A" d="M48 7c-15.46 0-28 12.54-28 28v8H14a6 6 0 0 0-6 6v31a9 9 0 0 0 9 9h62a9 9 0 0 0 9-9V49a6 6 0 0 0-6-6h-6v-8C76 19.54 63.46 7 48 7Zm-16 36v-8c0-8.84 7.16-16 16-16s16 7.16 16 16v8H32Z"/>
+  <path fill="#171816" d="M20 55h18.4c3.2 0 5.2 2.1 7.2 4.2 2.1 2.2 4.1 4.3 7.7 4.3 3.5 0 5.7-2.1 7.9-4.3 2.1-2.1 4.3-4.2 7.5-4.2H76v8H68c-.9 0-1.9 1-3.5 2.6-2.8 2.8-6.7 6.7-13.2 6.7-6.6 0-10.4-3.9-13.2-6.7-1.6-1.6-2.5-2.6-3.7-2.6H20v-8Z"/>
+</svg>
