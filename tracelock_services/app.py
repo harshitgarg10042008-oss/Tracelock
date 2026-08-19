@@ -385,6 +385,13 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             },
         }
 
+    @app.post("/v1/auth/logout", tags=["auth"])
+    def logout(authorization: str | None = Header(default=None)) -> dict[str, str]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        assert authorization is not None
+        team_operations.revoke_session(authorization[7:].strip(), runtime.operator_token)
+        return {"status": "signed_out", "username": member.username}
+
     @app.post("/v1/demo/scenarios", tags=["operations"])
     def run_demo_scenario(
         request: ScenarioRequest, authorization: str | None = Header(default=None)

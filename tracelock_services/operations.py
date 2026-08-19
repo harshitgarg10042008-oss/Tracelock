@@ -40,6 +40,7 @@ class OperationsStore:
         self.saved_investigations: dict[str, dict[str, Any]] = {}
         self.alert_rules: dict[str, dict[str, Any]] = {}
         self.event_sequence = 0
+        self.revoked_sessions: set[str] = set()
         self.destinations: dict[str, dict[str, Any]] = {}
         self.identities: dict[str, dict[str, Any]] = {
             "analytics-workload": {
@@ -55,8 +56,15 @@ class OperationsStore:
         if member is None or password != f"{username}-tracelock-local":
             raise HTTPException(status_code=401, detail="invalid_credentials")
         now = datetime.now(UTC)
+        session_id = f"session_{uuid4().hex}"
         encoded = jwt.encode(
-            {"sub": username, "role": member.role, "iat": now, "exp": now + timedelta(hours=8)},
+            {
+                "sub": username,
+                "role": member.role,
+                "sid": session_id,
+                "iat": now,
+                "exp": now + timedelta(hours=8),
+            },
             secret,
             algorithm="HS256",
         )
@@ -69,10 +77,23 @@ class OperationsStore:
             claims = jwt.decode(token[7:].strip(), secret, algorithms=["HS256"])
         except jwt.InvalidTokenError as error:
             raise HTTPException(status_code=401, detail="invalid_session") from error
+        session_id = claims.get("sid")
+        if not isinstance(session_id, str) or session_id in self.revoked_sessions:
+            raise HTTPException(status_code=401, detail="session_revoked")
         member = self.members.get(str(claims.get("sub")))
         if member is None:
             raise HTTPException(status_code=401, detail="unknown_member")
         return member
+
+    def revoke_session(self, token: str, secret: str) -> None:
+        try:
+            claims = jwt.decode(token, secret, algorithms=["HS256"], options={"verify_exp": False})
+        except jwt.InvalidTokenError as error:
+            raise HTTPException(status_code=401, detail="invalid_session") from error
+        session_id = claims.get("sid")
+        if not isinstance(session_id, str):
+            raise HTTPException(status_code=401, detail="invalid_session")
+        self.revoked_sessions.add(session_id)
 
     @staticmethod
     def require_role(member: TeamMember, *roles: str) -> None:
