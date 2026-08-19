@@ -1,9 +1,4 @@
-"""Phase 5 bounded gateway vertical slice.
-
-The gateway accepts bounded JSON, verifies workload identity, validates a registered
-destination, records a pre-send decision, and releases only approved requests.
-Policy evaluation and provenance are intentionally deferred to later phases.
-"""
+"""Phase 5 bounded gateway with Phase 6 provenance and classification."""
 
 from __future__ import annotations
 
@@ -17,6 +12,7 @@ from uuid import uuid4
 
 from .destinations import DestinationRegistry
 from .identity import WorkloadCredentialVerifier
+from .provenance import TrustedProvenanceVerifier, classify_payload
 
 
 class GatewayAction(StrEnum):
@@ -36,6 +32,7 @@ class GatewayRequest:
     request_id: str
     workload_id: str
     workload_token: str
+    provenance_token: str
     destination_id: str
     destination_url: str
     method: str
@@ -75,6 +72,8 @@ class GatewayDecision:
     receipt_status: ReceiptStatus
     receiver_request_count: int
     body_sha256: str | None
+    classification_summary: tuple[str, ...] = ()
+    provenance_confidence: str = "unknown"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +89,8 @@ class GatewayDecision:
             "receipt_status": self.receipt_status.value,
             "receiver_request_count": self.receiver_request_count,
             "body_sha256": self.body_sha256,
+            "classification_summary": list(self.classification_summary),
+            "provenance_confidence": self.provenance_confidence,
         }
 
 
@@ -150,6 +151,7 @@ class Gateway:
         destinations: DestinationRegistry,
         transport: ReceiverTransport,
         resolver: Callable[[str, int], list[str]],
+        provenance_verifier: TrustedProvenanceVerifier,
         max_body_bytes: int = 1_048_576,
         max_depth: int = 20,
     ) -> None:
@@ -157,6 +159,7 @@ class Gateway:
         self.destinations = destinations
         self.transport = transport
         self.resolver = resolver
+        self.provenance_verifier = provenance_verifier
         self.max_body_bytes = max_body_bytes
         self.max_depth = max_depth
 
@@ -186,6 +189,28 @@ class Gateway:
             )
         assert body_sha256 is not None
 
+        provenance = self.provenance_verifier.verify(request.provenance_token)
+        if not provenance.verified:
+            return self._blocked(
+                request,
+                decision_id,
+                flow_id,
+                provenance.reason_code,
+                GatewayAction.BLOCK,
+                body_sha256,
+            )
+        classification = classify_payload(request.body, provenance.labels)
+        if classification.unknown_field_paths:
+            return self._blocked(
+                request,
+                decision_id,
+                flow_id,
+                "unknown_provenance",
+                GatewayAction.BLOCK,
+                body_sha256,
+                classification.summary,
+            )
+
         identity = self.verifier.verify(
             request.workload_token,
             expected_workload_id=request.workload_id,
@@ -198,6 +223,7 @@ class Gateway:
                 identity.reason_code,
                 GatewayAction.BLOCK,
                 body_sha256,
+                classification.summary,
             )
 
         destination = self.destinations.validate(
@@ -213,6 +239,7 @@ class Gateway:
                 destination.reason_code,
                 GatewayAction.BLOCK,
                 body_sha256,
+                classification.summary,
             )
 
         receipt = self.transport.send(
@@ -228,13 +255,15 @@ class Gateway:
             decision_id,
             flow_id,
             GatewayAction.ALLOW,
-            "identity_and_destination_verified",
+            "identity_destination_and_provenance_verified",
             request.destination_id,
             request.workload_id,
             receipt.status is ReceiptStatus.RECEIVED,
             receipt.status,
             receipt.receiver_request_count,
             body_sha256,
+            tuple(item.value for item in classification.summary),
+            "trusted",
         )
 
     def _blocked(
@@ -245,6 +274,7 @@ class Gateway:
         reason_code: str,
         action: GatewayAction,
         body_sha256: str | None,
+        classification_summary: tuple[Any, ...] = (),
     ) -> GatewayDecision:
         return GatewayDecision(
             request.request_id,
@@ -258,6 +288,11 @@ class Gateway:
             ReceiptStatus.NOT_OBSERVED,
             0,
             body_sha256,
+            tuple(
+                item.value if hasattr(item, "value") else str(item)
+                for item in classification_summary
+            ),
+            "trusted" if classification_summary else "unknown",
         )
 
     def _validate_body(self, body: Any, body_sha256: str | None) -> str | None:

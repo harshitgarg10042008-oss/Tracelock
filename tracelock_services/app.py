@@ -1,4 +1,4 @@
-"""Local TraceLock service with the Phase 5 gateway vertical slice."""
+"""Local TraceLock service with the Phase 6 trusted-provenance gateway."""
 
 from __future__ import annotations
 
@@ -14,12 +14,11 @@ from .boundary import BoundaryEventStore
 from .destinations import DestinationRegistry, RegisteredDestination
 from .gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
 from .identity import WorkloadCredentialVerifier
+from .provenance import TrustedProvenanceVerifier
 
 
 @dataclass(frozen=True)
 class ServiceConfig:
-    """Runtime configuration shared by each local service role."""
-
     service_name: str = "tracelock-gateway"
     service_role: str = "gateway"
     environment: str = "local"
@@ -27,6 +26,9 @@ class ServiceConfig:
     identity_issuer: str = "tracelock-local-issuer"
     identity_audience: str = "tracelock-gateway"
     identity_signing_key: str = "local-development-signing-key-change-me"
+    provenance_issuer: str = "tracelock-local-provenance"
+    provenance_audience: str = "tracelock-gateway"
+    provenance_signing_key: str = "local-development-provenance-key-change-me"
 
     @classmethod
     def from_environment(cls) -> ServiceConfig:
@@ -40,12 +42,23 @@ class ServiceConfig:
             identity_signing_key=os.getenv(
                 "TRACELOCK_IDENTITY_SIGNING_KEY", cls.identity_signing_key
             ),
+            provenance_issuer=os.getenv("TRACELOCK_PROVENANCE_ISSUER", cls.provenance_issuer),
+            provenance_audience=os.getenv(
+                "TRACELOCK_PROVENANCE_AUDIENCE", cls.provenance_audience
+            ),
+            provenance_signing_key=os.getenv(
+                "TRACELOCK_PROVENANCE_SIGNING_KEY", cls.provenance_signing_key
+            ),
         )
 
 
 class IdentityVerifyRequest(BaseModel):
     token: str
     expected_workload_id: str
+
+
+class ProvenanceVerifyRequest(BaseModel):
+    token: str
 
 
 class DestinationValidateRequest(BaseModel):
@@ -87,8 +100,6 @@ def _default_destinations() -> tuple[RegisteredDestination, ...]:
 
 
 def create_app(config: ServiceConfig | None = None) -> FastAPI:
-    """Create an isolated application instance for tests or local deployment."""
-
     runtime = config or ServiceConfig.from_environment()
     events = BoundaryEventStore()
     destinations = DestinationRegistry(_default_destinations())
@@ -98,12 +109,19 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         signing_key=runtime.identity_signing_key,
         workload_subjects={"analytics-workload": "workload:analytics"},
     )
+    provenance_verifier = TrustedProvenanceVerifier(
+        issuer=runtime.provenance_issuer,
+        audience=runtime.provenance_audience,
+        signing_key=runtime.provenance_signing_key,
+        approved_integrations={"analytics-source"},
+    )
     transport = InMemoryReceiverTransport(tuple(item.destination_id for item in destinations.all()))
     gateway = Gateway(
         verifier=verifier,
         destinations=destinations,
         transport=transport,
         resolver=lambda _host, _port: ["93.184.216.34"],
+        provenance_verifier=provenance_verifier,
     )
     app = FastAPI(
         title="TraceLock",
@@ -114,6 +132,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     app.state.boundary_events = events
     app.state.destination_registry = destinations
     app.state.identity_verifier = verifier
+    app.state.provenance_verifier = provenance_verifier
     app.state.gateway = gateway
     app.state.receiver_transport = transport
 
@@ -124,8 +143,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "role": runtime.service_role,
             "environment": runtime.environment,
             "version": runtime.version,
-            "phase": 5,
-            "status": "gateway-vertical-slice",
+            "phase": 6,
+            "status": "provenance-classification-gateway",
         }
 
     @app.get("/health", tags=["service"])
@@ -141,6 +160,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 "network_enforcement": runtime.service_role == "gateway",
                 "identity_verification": True,
                 "destination_registration": True,
+                "trusted_provenance": True,
+                "sticky_classification": True,
                 "gateway_vertical_slice": True,
                 "receiver_evidence": True,
                 "persistence": False,
@@ -164,6 +185,10 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             expected_workload_id=request.expected_workload_id,
         ).as_dict()
 
+    @app.post("/v1/provenance/verify", tags=["provenance"])
+    def verify_provenance(request: ProvenanceVerifyRequest) -> dict[str, Any]:
+        return provenance_verifier.verify(request.token).as_dict()
+
     @app.get("/v1/destinations", tags=["destinations"])
     def list_destinations() -> dict[str, Any]:
         return {"destinations": [item.as_dict() for item in destinations.all()]}
@@ -180,6 +205,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     def authorize_and_send(
         request: EgressRequest,
         authorization: str | None = Header(default=None),
+        x_tracelock_provenance: str | None = Header(default=None),
     ) -> dict[str, Any]:
         token = ""
         if authorization and authorization.lower().startswith("bearer "):
@@ -189,6 +215,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 request_id=request.request_id,
                 workload_id=request.workload_id,
                 workload_token=token,
+                provenance_token=x_tracelock_provenance or "",
                 destination_id=request.destination_id,
                 destination_url=request.destination_url,
                 method=request.method.upper(),
@@ -206,8 +233,6 @@ app = create_app()
 
 
 def run() -> None:
-    """Launch the configured local service."""
-
     uvicorn.run(
         "tracelock_services.app:app",
         host=os.getenv("TRACELOCK_HOST", "127.0.0.1"),
