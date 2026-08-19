@@ -6,6 +6,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
@@ -19,7 +20,8 @@ from .destinations import DestinationRegistry, RegisteredDestination
 from .evidence import EvidenceStore
 from .gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
 from .governance import OperationalState, validate_runtime_config
-from .identity import WorkloadCredentialVerifier
+from .identity import WorkloadCredentialVerifier, issue_demo_token
+from .operations import OperationsStore
 from .policy import (
     PolicyAction,
     PolicyBundle,
@@ -27,7 +29,7 @@ from .policy import (
     PolicyRule,
     sign_bundle,
 )
-from .provenance import TrustedProvenanceVerifier
+from .provenance import ProvenanceLabel, TrustedProvenanceVerifier, issue_provenance_token
 
 
 @dataclass(frozen=True)
@@ -59,9 +61,7 @@ class ServiceConfig:
                 "TRACELOCK_IDENTITY_SIGNING_KEY", cls.identity_signing_key
             ),
             provenance_issuer=os.getenv("TRACELOCK_PROVENANCE_ISSUER", cls.provenance_issuer),
-            provenance_audience=os.getenv(
-                "TRACELOCK_PROVENANCE_AUDIENCE", cls.provenance_audience
-            ),
+            provenance_audience=os.getenv("TRACELOCK_PROVENANCE_AUDIENCE", cls.provenance_audience),
             provenance_signing_key=os.getenv(
                 "TRACELOCK_PROVENANCE_SIGNING_KEY", cls.provenance_signing_key
             ),
@@ -91,6 +91,26 @@ class EvidenceSearchRequest(BaseModel):
 class OperatorCaseUpdate(BaseModel):
     case_status: str
     operator_note: str | None = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class IncidentUpdate(BaseModel):
+    status: str | None = None
+    owner: str | None = None
+    comment: str | None = None
+
+
+class ScenarioRequest(BaseModel):
+    scenario: str
+
+
+class DestinationManagementRequest(BaseModel):
+    destination_id: str
+    enabled: bool = True
 
 
 class DestinationValidateRequest(BaseModel):
@@ -223,6 +243,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     runtime = config or ServiceConfig.from_environment()
     governance = validate_runtime_config(runtime)
     operations = OperationalState()
+    team_operations = OperationsStore()
     events = BoundaryEventStore()
     evidence = EvidenceStore(runtime.evidence_db_path)
     destinations = DestinationRegistry(_default_destinations())
@@ -269,6 +290,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     app.state.config = runtime
     app.state.governance = governance
     app.state.operations = operations
+    app.state.team_operations = team_operations
     app.state.boundary_events = events
     app.state.evidence_store = evidence
     app.state.destination_registry = destinations
@@ -302,10 +324,10 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 "network_enforcement": runtime.service_role == "gateway",
                 "identity_verification": True,
                 "destination_registration": True,
-            "trusted_provenance": True,
-            "sticky_classification": True,
-            "deterministic_policy": True,
-            "redaction": True,
+                "trusted_provenance": True,
+                "sticky_classification": True,
+                "deterministic_policy": True,
+                "redaction": True,
                 "transformed_re_evaluation": True,
                 "governance_validation": True,
                 "resilience_readiness": True,
@@ -331,6 +353,125 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         if not ready:
             raise HTTPException(status_code=503, detail="service_not_ready")
         return {"status": "ready", "governance": governance.as_dict()}
+
+    @app.post("/v1/auth/login", tags=["auth"])
+    def login(request: LoginRequest) -> dict[str, Any]:
+        token = team_operations.issue_session(
+            request.username, request.password, runtime.operator_token
+        )
+        member = team_operations.members[request.username]
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "user": {
+                "username": member.username,
+                "role": member.role,
+                "display_name": member.display_name,
+            },
+        }
+
+    @app.post("/v1/demo/scenarios", tags=["operations"])
+    def run_demo_scenario(
+        request: ScenarioRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+        scenario = request.scenario.lower()
+        if scenario == "bypass":
+            return {
+                "scenario": scenario,
+                "action": "block",
+                "reason_code": "direct_bypass_detected",
+                "sent": False,
+                "simulated": True,
+            }
+        if scenario == "allow":
+            destination_id, destination_url, purpose, operation = (
+                "analytics.internal",
+                "https://analytics.internal/v1/orders/summary",
+                "business-analytics",
+                "aggregate",
+            )
+            body: dict[str, Any] = {"aggregate_total": 42}
+            labels: tuple[ProvenanceLabel, ...] = (
+                ProvenanceLabel(
+                    "aggregate_total", Classification.INTERNAL, "analytics-source", "trusted"
+                ),
+            )
+        elif scenario == "redact":
+            destination_id, destination_url, purpose, operation = (
+                "finance.internal",
+                "https://finance.internal/v1/orders/summary",
+                "finance-reporting",
+                "aggregate",
+            )
+            body = {
+                "customer_id": "cust-1",
+                "customer_email": "masked@example.test",
+                "order_total": 125,
+            }
+            labels = tuple(
+                ProvenanceLabel(field, Classification.INTERNAL, "analytics-source", "trusted")
+                for field in body
+            )
+        elif scenario == "block":
+            destination_id, destination_url, purpose, operation = (
+                "external-webhook",
+                "https://webhook.example.test/v1/events",
+                "external-sync",
+                "send",
+            )
+            body = {"customer_email": "person@example.test"}
+            labels = (
+                ProvenanceLabel(
+                    "customer_email", Classification.CONFIDENTIAL, "analytics-source", "trusted"
+                ),
+            )
+        else:
+            raise HTTPException(status_code=400, detail="unknown_scenario")
+        expires_at = datetime.now(UTC) + timedelta(minutes=5)
+        workload_token = issue_demo_token(
+            signing_key=runtime.identity_signing_key,
+            issuer=runtime.identity_issuer,
+            audience=runtime.identity_audience,
+            workload_id="analytics-workload",
+            subject="workload:analytics",
+            jti=f"demo-{uuid4().hex}",
+            expires_at=expires_at,
+        )
+        provenance_token = issue_provenance_token(
+            signing_key=runtime.provenance_signing_key,
+            issuer=runtime.provenance_issuer,
+            audience=runtime.provenance_audience,
+            source_integration="analytics-source",
+            labels=labels,
+            jti=f"prov-{uuid4().hex}",
+            expires_at=expires_at,
+        )
+        result = gateway.authorize_and_send(
+            GatewayRequest(
+                request_id=f"demo-{uuid4().hex}",
+                workload_id="analytics-workload",
+                workload_token=workload_token,
+                provenance_token=provenance_token,
+                destination_id=destination_id,
+                destination_url=destination_url,
+                method="POST",
+                body=body,
+                purpose=purpose,
+                operation=operation,
+            )
+        )
+        evidence.record(result)
+        return {"scenario": scenario, "decision": result.as_dict()}
+
+    @app.get("/v1/auth/me", tags=["auth"])
+    def current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        return {
+            "username": member.username,
+            "role": member.role,
+            "display_name": member.display_name,
+        }
 
     @app.get("/v1/governance", tags=["governance"])
     def governance_status() -> dict[str, Any]:
@@ -369,6 +510,29 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             limit=limit,
         )
         return {"records": [record.as_dict() for record in records]}
+
+    @app.get("/v1/incidents", tags=["operator"])
+    def list_incidents(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+        return {"incidents": [item.as_dict() for item in team_operations.incidents.values()]}
+
+    @app.patch("/v1/incidents/{decision_id}", tags=["operator"])
+    def update_incident(
+        decision_id: str, update: IncidentUpdate, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        team_operations.require_role(member, "admin", "operator")
+        incident = team_operations.incident_for(decision_id)
+        if update.status is not None:
+            if update.status not in {"open", "acknowledged", "investigating", "closed"}:
+                raise HTTPException(status_code=400, detail="invalid_incident_status")
+            incident.status = update.status
+        if update.owner is not None:
+            incident.owner = update.owner
+        if update.comment:
+            incident.comments.append(update.comment)
+        incident.updated_at = datetime.now(UTC).isoformat()
+        return incident.as_dict()
 
     @app.get("/v1/evidence/{decision_id}", tags=["evidence"])
     def get_evidence(decision_id: str) -> dict[str, Any]:
@@ -416,6 +580,26 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     @app.get("/v1/destinations", tags=["destinations"])
     def list_destinations() -> dict[str, Any]:
         return {"destinations": [item.as_dict() for item in destinations.all()]}
+
+    @app.patch("/v1/destinations/{destination_id}", tags=["destinations"])
+    def manage_destination(
+        destination_id: str,
+        request: DestinationManagementRequest,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        team_operations.require_role(member, "admin", "operator")
+        item = team_operations.destinations.setdefault(
+            destination_id, {"destination_id": destination_id}
+        )
+        item["enabled"] = request.enabled
+        item["updated_by"] = member.username
+        return item
+
+    @app.get("/v1/identities", tags=["identity"])
+    def list_identities(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+        return {"identities": list(team_operations.identities.values())}
 
     @app.post("/v1/destinations/validate", tags=["destinations"])
     def validate_destination(request: DestinationValidateRequest) -> dict[str, Any]:

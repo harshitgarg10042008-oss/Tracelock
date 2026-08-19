@@ -232,3 +232,11 @@ docker compose -f compose.yaml down
 ```
 
 The frontend is attached to the host-facing network only. It does not weaken the workload-to-destination boundary: the workload remains on `workload-path`, the destination remains on `egress-path`, and the gateway remains the controlled bridge between them.
+
+## Control Center operations
+
+The Control Center now includes a **Traffic Lab** for bounded allow, redact, block, and direct-bypass demonstrations. These scenarios use the real gateway authorization path and the local in-memory receiver transport; they do not send data to an external service.
+
+The **Team access** page provides local role-aware sessions for the operator console. The development accounts are `admin` / `admin-tracelock-local`, `operator` / `operator-tracelock-local`, and `viewer` / `viewer-tracelock-local`. Use an operator or administrator session for scenario execution and incident-management actions. Replace these development credentials with managed identity integration before production deployment.
+
+The backend exposes authentication and operational routes under `/v1/auth`, `/v1/demo/scenarios`, `/v1/incidents`, and `/v1/identities`. Existing evidence, governance, destination, policy, and boundary endpoints remain available. Raw payloads are not added to evidence exports.
