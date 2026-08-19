@@ -11,10 +11,7 @@ async function startServer() {
   const server = createServer(app);
 
   // Serve static files from dist/public in production
-  const staticPath =
-    process.env.NODE_ENV === "production"
-      ? path.resolve(__dirname, "public")
-      : path.resolve(__dirname, "..", "dist", "public");
+  const staticPath = path.resolve(__dirname, "public");
 
   app.use(express.static(staticPath));
 
@@ -23,11 +20,15 @@ async function startServer() {
     res.sendFile(path.join(staticPath, "index.html"));
   });
 
-  const port = process.env.PORT || 3000;
+  const host = process.env.HOST || "0.0.0.0";
+  const port = Number(process.env.PORT || 3000);
 
-  server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}/`);
+  server.listen(port, host, () => {
+    console.log(`TraceLock Control Center running on http://${host}:${port}`);
   });
 }
 
-startServer().catch(console.error);
+startServer().catch((error) => {
+  console.error("Frontend server failed to start", error);
+  process.exitCode = 1;
+});
