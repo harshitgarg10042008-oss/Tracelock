@@ -21,8 +21,8 @@ def test_gateway_health_and_metadata() -> None:
     metadata = client.get("/")
     assert metadata.status_code == 200
     assert metadata.json()["role"] == "gateway"
-    assert metadata.json()["phase"] == 6
-    assert metadata.json()["status"] == "provenance-classification-gateway"
+    assert metadata.json()["phase"] == 8
+    assert metadata.json()["status"] == "redaction-revalidation-gateway"
 
 
 def test_status_makes_unimplemented_capabilities_explicit() -> None:
@@ -48,6 +48,8 @@ def test_status_makes_unimplemented_capabilities_explicit() -> None:
         "gateway_vertical_slice": True,
         "receiver_evidence": True,
         "deterministic_policy": True,
+        "redaction": True,
+        "transformed_re_evaluation": True,
         "persistence": False,
         "policy_evaluation": True,
     }

@@ -35,6 +35,7 @@ class PolicyRule:
     fields_any: tuple[str, ...] = ()
     minimum_group_size: int | None = None
     allowed_fields: tuple[str, ...] = ()
+    require_transformed: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +53,7 @@ class PolicyRule:
             "fields_any": list(self.fields_any),
             "minimum_group_size": self.minimum_group_size,
             "allowed_fields": list(self.allowed_fields),
+            "require_transformed": self.require_transformed,
         }
 
 
@@ -108,6 +110,7 @@ class PolicyInput:
     field_paths: tuple[str, ...]
     provenance_confidence: str
     record_count: int = 1
+    transformed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +223,8 @@ class PolicyEngine:
         ):
             return False
         if rule.minimum_group_size is not None and item.record_count < rule.minimum_group_size:
+            return False
+        if rule.require_transformed is not None and rule.require_transformed != item.transformed:
             return False
         return True
 

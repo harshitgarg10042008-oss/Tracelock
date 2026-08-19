@@ -15,6 +15,28 @@ rules:
     classification_any: [internal]
     provenance_confidence: trusted
     minimum_group_size: 1
+  - id: redact-finance-email
+    priority: 90
+    action: redact
+    reason_code: finance_minimum_fields
+    workload_id: analytics-workload
+    destination_id: finance.internal
+    destination_environment: internal
+    purpose: finance-reporting
+    fields_any: [customer_id, customer_email, order_total]
+    allowed_fields: [customer_id, order_total]
+    require_transformed: false
+  - id: allow-finance-redacted
+    priority: 95
+    action: allow
+    reason_code: finance_payload_revalidated
+    workload_id: analytics-workload
+    destination_id: finance.internal
+    destination_environment: internal
+    purpose: finance-reporting
+    operation: aggregate
+    provenance_confidence: trusted
+    require_transformed: true
   - id: block-external-confidential
     priority: 80
     action: block

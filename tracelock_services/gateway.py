@@ -14,6 +14,7 @@ from .destinations import DestinationRegistry
 from .identity import WorkloadCredentialVerifier
 from .policy import PolicyAction, PolicyEngine, PolicyInput
 from .provenance import TrustedProvenanceVerifier, classify_payload
+from .transformations import ensure_removed_values_absent, redact_to_permitted_fields
 
 
 class GatewayAction(StrEnum):
@@ -78,6 +79,9 @@ class GatewayDecision:
     policy_id: str | None = None
     policy_version: int | None = None
     matched_rule_id: str | None = None
+    original_body_sha256: str | None = None
+    redacted_fields: tuple[str, ...] = ()
+    transformation_types: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +102,9 @@ class GatewayDecision:
             "policy_id": self.policy_id,
             "policy_version": self.policy_version,
             "matched_rule_id": self.matched_rule_id,
+            "original_body_sha256": self.original_body_sha256,
+            "redacted_fields": list(self.redacted_fields),
+            "transformation_types": list(self.transformation_types),
         }
 
 
@@ -272,9 +279,99 @@ class Gateway:
                 classifications=classification.summary,
                 field_paths=tuple(label.field_path for label in provenance.labels),
                 provenance_confidence="trusted",
+                transformed=False,
             )
         )
-        if policy.action is not PolicyAction.ALLOW:
+        body_to_send = request.body
+        final_hash = body_sha256
+        final_classification = classification
+        final_policy = policy
+        redacted_fields: tuple[str, ...] = ()
+        transformation_types: tuple[str, ...] = ()
+        original_hash = body_sha256
+        if policy.action is PolicyAction.REDACT:
+            transformed = redact_to_permitted_fields(request.body, policy.permitted_fields)
+            if not ensure_removed_values_absent(
+                request.body,
+                transformed.transformed_body,
+                transformed.redacted_fields,
+            ):
+                return self._blocked(
+                    request,
+                    decision_id,
+                    flow_id,
+                    "redaction_value_survived",
+                    GatewayAction.BLOCK,
+                    body_sha256,
+                    classification.summary,
+                    policy.policy_id,
+                    policy.policy_version,
+                    policy.matched_rule_id,
+                )
+            if self._validate_body(transformed.transformed_body, transformed.body_sha256):
+                return self._blocked(
+                    request,
+                    decision_id,
+                    flow_id,
+                    "transformed_payload_invalid",
+                    GatewayAction.BLOCK,
+                    body_sha256,
+                    classification.summary,
+                    policy.policy_id,
+                    policy.policy_version,
+                    policy.matched_rule_id,
+                )
+            transformed_classification = classify_payload(
+                transformed.transformed_body, provenance.labels
+            )
+            if transformed_classification.unknown_field_paths:
+                return self._blocked(
+                    request,
+                    decision_id,
+                    flow_id,
+                    "transformed_unknown_provenance",
+                    GatewayAction.BLOCK,
+                    body_sha256,
+                    transformed_classification.summary,
+                    policy.policy_id,
+                    policy.policy_version,
+                    policy.matched_rule_id,
+                )
+            re_evaluated = self.policy_engine.evaluate(
+                PolicyInput(
+                    workload_id=request.workload_id,
+                    destination_id=request.destination_id,
+                    destination_environment=registered.environment,
+                    purpose=request.purpose,
+                    operation=request.operation,
+                    classifications=transformed_classification.summary,
+                    field_paths=tuple(
+                        label.field_path for label in transformed_classification.fields
+                    ),
+                    provenance_confidence="trusted",
+                    transformed=True,
+                )
+            )
+            if re_evaluated.action is not PolicyAction.ALLOW:
+                return self._blocked(
+                    request,
+                    decision_id,
+                    flow_id,
+                    re_evaluated.reason_code,
+                    GatewayAction.BLOCK,
+                    body_sha256,
+                    transformed_classification.summary,
+                    re_evaluated.policy_id,
+                    re_evaluated.policy_version,
+                    re_evaluated.matched_rule_id,
+                )
+            body_to_send = transformed.transformed_body
+            final_hash = transformed.body_sha256
+            final_policy = re_evaluated
+            final_classification = transformed_classification
+            redacted_fields = transformed.redacted_fields
+            transformation_types = transformed.transformation_types
+        elif policy.action is not PolicyAction.ALLOW:
             return self._blocked(
                 request,
                 decision_id,
@@ -293,8 +390,8 @@ class Gateway:
             destination_id=request.destination_id,
             destination_url=destination.canonical_url or request.destination_url,
             method=request.method,
-            body=request.body,
-            body_sha256=body_sha256,
+            body=body_to_send,
+            body_sha256=final_hash,
         )
         return GatewayDecision(
             request.request_id,
@@ -307,12 +404,15 @@ class Gateway:
             receipt.status is ReceiptStatus.RECEIVED,
             receipt.status,
             receipt.receiver_request_count,
-            body_sha256,
-            tuple(item.value for item in classification.summary),
+            final_hash,
+            tuple(item.value for item in final_classification.summary),
             "trusted",
             self.policy_engine.bundle.policy_id,
             self.policy_engine.bundle.version,
-            None,
+            final_policy.matched_rule_id,
+            original_hash,
+            redacted_fields,
+            transformation_types,
         )
 
     def _blocked(
@@ -327,6 +427,9 @@ class Gateway:
         policy_id: str | None = None,
         policy_version: int | None = None,
         matched_rule_id: str | None = None,
+        original_body_sha256: str | None = None,
+        redacted_fields: tuple[str, ...] = (),
+        transformation_types: tuple[str, ...] = (),
     ) -> GatewayDecision:
         return GatewayDecision(
             request.request_id,
@@ -348,6 +451,9 @@ class Gateway:
             policy_id,
             policy_version,
             matched_rule_id,
+            original_body_sha256,
+            redacted_fields,
+            transformation_types,
         )
 
     def _validate_body(self, body: Any, body_sha256: str | None) -> str | None:
