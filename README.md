@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 10 — governance, resilience, and production operations.**
+**Current phase: Phase 11 — security, performance, recovery, and bypass assurance.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -77,11 +77,11 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 10 implementation
+## Phase 11 implementation
 
-Phase 10 adds governance and resilience safeguards around the Phase 9 gateway. Production and staging configurations are validated without exposing secret values, readiness checks verify evidence-store availability, and egress requests are rejected before release when required evidence infrastructure is unavailable.
+Phase 11 adds repeatable assurance coverage across the Phase 10 gateway. Security tests check that public operational outputs do not expose payloads, credentials, signing keys, or operator tokens. Recovery tests reopen SQLite evidence stores, concurrency tests exercise protected writes, performance tests bound local readiness checks, and bypass tests verify the Compose network contract.
 
-Operational views remain available through `GET /v1/evidence` and `GET /v1/evidence/{decision_id}`. Controlled case updates use `POST /v1/evidence/{decision_id}/case` and require `X-TraceLock-Operator`. Governance status is available through `GET /v1/governance`, and readiness is exposed through `GET /ready`. The Phase 9 evidence, operator, and Phase 8 gateway behavior remain available.
+Operational views remain available through `GET /v1/evidence` and `GET /v1/evidence/{decision_id}`. Controlled case updates use `POST /v1/evidence/{decision_id}/case` and require `X-TraceLock-Operator`. Governance status is available through `GET /v1/governance`, and readiness is exposed through `GET /ready`. The Phase 10 governance, evidence, operator, and gateway behavior remain available.
 
 The available endpoints are:
 
@@ -104,7 +104,7 @@ Or start the four-role local topology:
 docker compose -f compose.yaml up --build
 ```
 
-The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, Phase 7 evaluates a signed deterministic policy, Phase 8 performs safe redaction followed by transformed-payload re-evaluation, Phase 9 persists privacy-safe evidence with searchable operator workflows, and Phase 10 validates governance and readiness before release. Full dashboards, retention, distributed resilience, and production security guarantees remain future work.
+The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, Phase 7 evaluates a signed deterministic policy, Phase 8 performs safe redaction followed by transformed-payload re-evaluation, Phase 9 persists privacy-safe evidence with searchable operator workflows, Phase 10 validates governance and readiness before release, and Phase 11 exercises the implemented controls through assurance tests. Full penetration testing, capacity benchmarking, distributed recovery, and production security sign-off remain future work.
 
 Verify direct bypass denial after starting Compose:
 
@@ -114,9 +114,9 @@ docker compose -f compose.yaml exec workload python scripts/check_direct_bypass.
 
 A connection error is the expected result. A successful connection indicates that the local boundary has failed.
 
-## Phase 10 exit criteria
+## Phase 11 exit criteria
 
-Phase 10 is complete when:
+Phase 11 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -155,11 +155,15 @@ Phase 10 is complete when:
 - Strong production configuration passes governance validation.
 - Readiness fails closed when governance or evidence storage is unavailable.
 - Operational errors expose only safe type-level information.
+- Security outputs do not expose payloads, credentials, signing keys, or operator tokens.
+- SQLite evidence survives store reopen and concurrent writes.
+- Readiness checks remain within the local performance bound.
+- Bypass topology tests pass and the Docker direct-bypass probe is documented.
 - Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 10
+## Explicit non-goals for Phase 11
 
-Phase 10 does not implement multi-instance coordination, distributed locks, database failover, secret-manager integration, asymmetric key rotation, formal change approval, retention enforcement, alert routing, a full web dashboard, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
+Phase 11 does not provide an independent penetration test, fuzzing campaign, external load-test report, formal threat-model sign-off, multi-instance recovery test, tamper-evident evidence chain, or production bypass assessment across all supported network stacks. Those capabilities are deliberately deferred to final release assurance.
 
 ## Local development
 

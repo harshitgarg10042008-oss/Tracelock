@@ -206,6 +206,18 @@ def _default_policy(signing_key: str) -> PolicyBundle:
     return sign_bundle(unsigned, signing_key)
 
 
+def _safe_config(config: ServiceConfig) -> dict[str, Any]:
+    values = asdict(config)
+    for field_name in (
+        "identity_signing_key",
+        "provenance_signing_key",
+        "policy_signing_key",
+        "operator_token",
+    ):
+        values.pop(field_name, None)
+    return values
+
+
 def create_app(config: ServiceConfig | None = None) -> FastAPI:
     runtime = config or ServiceConfig.from_environment()
     governance = validate_runtime_config(runtime)
@@ -271,7 +283,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     @app.get("/v1/status", tags=["service"])
     def status() -> dict[str, Any]:
         return {
-            "service": asdict(runtime),
+            "service": _safe_config(runtime),
             "capabilities": {
                 "authorization": True,
                 "network_enforcement": runtime.service_role == "gateway",
