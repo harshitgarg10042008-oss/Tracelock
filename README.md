@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 4 — workload identity and destination registration.**
+**Current phase: Phase 5 — gateway vertical slice and receiver evidence.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -60,7 +60,7 @@ tracelock/
 ├── services/                # Reserved service deployment boundaries
 ├── tests/                   # Unit and integration tests
 ├── tracelock_core/          # Framework-independent domain contracts
-├── tracelock_services/      # Runnable local FastAPI service and security checks
+├── tracelock_services/      # Runnable local FastAPI gateway and security checks
 ├── compose.yaml             # Local multi-service topology
 ├── pyproject.toml           # Python project metadata and tool configuration
 └── README.md                # Project charter and development guide
@@ -76,17 +76,19 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 4 implementation
+## Phase 5 implementation
 
-Phase 4 keeps the gateway-only local egress topology and adds two security gates: signed workload credential verification and registered destination validation. Workload credentials must have a valid issuer, audience, subject, workload binding, expiry, issued-at time, and non-revoked token ID. Requested destinations must match a registered scheme, host, port, path, TLS requirement, and safe resolved network address.
+Phase 5 connects the Phase 4 identity and destination checks to bounded outbound request handling. The gateway validates the HTTP method and JSON body, verifies the workload credential, validates the registered destination, creates a pre-send decision, and releases only approved requests to the synthetic receiver transport.
 
-The service exposes identity and destination endpoints for local development:
+The gateway endpoint is:
 
-- `POST /v1/identity/verify`
-- `GET /v1/destinations`
-- `POST /v1/destinations/validate`
+```text
+POST /v1/egress/authorize-and-send
+```
 
-The existing privacy-preserving `GET /v1/boundary-events` endpoint remains available. These checks do not yet authorize or release outbound payloads; that is the Phase 5 gateway vertical slice.
+Approved requests return `allow` with receiver evidence. Invalid identity, invalid destination, unsupported methods, and unsupported bodies return `block` or `unsupported` and never invoke the receiver. Decision responses contain metadata and a body hash, but never raw payload values or credentials.
+
+The Phase 4 identity and destination endpoints remain available, as does the privacy-preserving `GET /v1/boundary-events` endpoint.
 
 The available endpoints are:
 
@@ -109,7 +111,7 @@ Or start the four-role local topology:
 docker compose -f compose.yaml up --build
 ```
 
-The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, and Phase 4 verifies workload identity and registered destinations. The system does not yet proxy or authorize outbound payloads, persist events, evaluate policies, or provide production security guarantees.
+The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, and Phase 5 proves bounded pre-send release control with synthetic receiver evidence. Trusted provenance, classification-aware policy evaluation, redaction, durable evidence, and production security guarantees remain future work.
 
 Verify direct bypass denial after starting Compose:
 
@@ -119,9 +121,9 @@ docker compose -f compose.yaml exec workload python scripts/check_direct_bypass.
 
 A connection error is the expected result. A successful connection indicates that the local boundary has failed.
 
-## Phase 4 exit criteria
+## Phase 5 exit criteria
 
-Phase 4 is complete when:
+Phase 5 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -138,11 +140,15 @@ Phase 4 is complete when:
 - Direct-bypass tests pass.
 - Workload credentials reject invalid issuer, audience, expiry, workload, and revoked-token conditions.
 - Destinations reject unknown identities, unsafe addresses, invalid paths, and non-TLS URLs.
+- Approved bounded requests reach the synthetic receiver.
+- Invalid identity and destination requests produce zero receiver calls.
+- Unsupported methods and bodies are rejected before release.
+- Decisions contain no raw payload values or credentials.
 - Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 4
+## Explicit non-goals for Phase 5
 
-Phase 4 does not implement a live identity provider, asymmetric key rotation, gateway proxying, policy authorization, a database, a dashboard, policy signing, production provenance integrations, or redaction. Those capabilities are deliberately deferred to later phases.
+Phase 5 does not implement trusted provenance, classification-aware policy authorization, redaction, durable evidence, retries, idempotency, real downstream HTTP transport, response inspection, a database, a dashboard, policy signing, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
 
 ## Local development
 

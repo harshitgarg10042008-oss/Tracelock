@@ -1,4 +1,4 @@
-"""Local TraceLock service with Phase 4 identity and destination checks."""
+"""Local TraceLock service with the Phase 5 gateway vertical slice."""
 
 from __future__ import annotations
 
@@ -7,11 +7,12 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from pydantic import BaseModel
 
 from .boundary import BoundaryEventStore
 from .destinations import DestinationRegistry, RegisteredDestination
+from .gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
 from .identity import WorkloadCredentialVerifier
 
 
@@ -52,6 +53,18 @@ class DestinationValidateRequest(BaseModel):
     requested_url: str
 
 
+class EgressRequest(BaseModel):
+    request_id: str
+    flow_id: str | None = None
+    workload_id: str
+    destination_id: str
+    destination_url: str
+    method: str = "POST"
+    body: dict[str, Any] | list[Any]
+    purpose: str
+    operation: str
+
+
 def _default_destinations() -> tuple[RegisteredDestination, ...]:
     return (
         RegisteredDestination(
@@ -85,15 +98,24 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         signing_key=runtime.identity_signing_key,
         workload_subjects={"analytics-workload": "workload:analytics"},
     )
+    transport = InMemoryReceiverTransport(tuple(item.destination_id for item in destinations.all()))
+    gateway = Gateway(
+        verifier=verifier,
+        destinations=destinations,
+        transport=transport,
+        resolver=lambda _host, _port: ["93.184.216.34"],
+    )
     app = FastAPI(
         title="TraceLock",
         version=runtime.version,
-        description="Runtime data-flow authorization service skeleton.",
+        description="Runtime data-flow authorization gateway.",
     )
     app.state.config = runtime
     app.state.boundary_events = events
     app.state.destination_registry = destinations
     app.state.identity_verifier = verifier
+    app.state.gateway = gateway
+    app.state.receiver_transport = transport
 
     @app.get("/", tags=["service"])
     def service_metadata() -> dict[str, Any]:
@@ -102,8 +124,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "role": runtime.service_role,
             "environment": runtime.environment,
             "version": runtime.version,
-            "phase": 4,
-            "status": "identity-destination-skeleton",
+            "phase": 5,
+            "status": "gateway-vertical-slice",
         }
 
     @app.get("/health", tags=["service"])
@@ -115,10 +137,12 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         return {
             "service": asdict(runtime),
             "capabilities": {
-                "authorization": False,
+                "authorization": True,
                 "network_enforcement": runtime.service_role == "gateway",
                 "identity_verification": True,
                 "destination_registration": True,
+                "gateway_vertical_slice": True,
+                "receiver_evidence": True,
                 "persistence": False,
                 "policy_evaluation": False,
             },
@@ -151,6 +175,29 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             requested_url=request.requested_url,
             resolver=lambda _host, _port: ["93.184.216.34"],
         ).as_dict()
+
+    @app.post("/v1/egress/authorize-and-send", tags=["gateway"])
+    def authorize_and_send(
+        request: EgressRequest,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        token = ""
+        if authorization and authorization.lower().startswith("bearer "):
+            token = authorization[7:].strip()
+        result = gateway.authorize_and_send(
+            GatewayRequest(
+                request_id=request.request_id,
+                workload_id=request.workload_id,
+                workload_token=token,
+                destination_id=request.destination_id,
+                destination_url=request.destination_url,
+                method=request.method.upper(),
+                body=request.body,
+                purpose=request.purpose,
+                operation=request.operation,
+            )
+        )
+        return result.as_dict()
 
     return app
 
