@@ -1,0 +1,23 @@
+{
+  "release": "tracelock-phase-12",
+  "package_checker": {
+    "status": "passed",
+    "required_files": 9,
+    "missing_files": 0
+  },
+  "quality_checks": {
+    "ruff": "passed",
+    "mypy": "passed",
+    "pytest": {
+      "status": "passed",
+      "tests_collected": 36,
+      "tests_passed": 36,
+      "tests_failed": 0
+    }
+  },
+  "warnings": [
+    "FastAPI/Starlette reports a non-failing httpx test-client deprecation warning."
+  ],
+  "docker_runtime_note": "The Docker Desktop direct-bypass probe must be run on the user's Docker Desktop host; the sandbox does not provide a Docker daemon.",
+  "acceptance_scope": "Reproducible local demonstration and repository review; not independent production-security certification."
+}
