@@ -7,10 +7,13 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  ClipboardList,
   Clock3,
   Code2,
   Database,
+  Download,
   FileCheck2,
+  Filter,
   Fingerprint,
   Gauge,
   GitBranch,
@@ -22,11 +25,14 @@ import {
   LockKeyhole,
   Menu,
   Network,
+  Play,
   RefreshCw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
   TerminalSquare,
+  Users,
+  Waypoints,
   X,
   Zap,
 } from "lucide-react";
@@ -129,20 +135,83 @@ function ServiceView({ title, endpoint, description, icon: Icon }: { title: stri
   );
 }
 
+function JsonState({ value, loading, error }: { value: unknown; loading: boolean; error: string | null }) {
+  if (loading) return <pre>Loading…</pre>;
+  if (error) return <div className="service-error-copy"><CircleAlert size={20} /><p>{error}<br /><span>Confirm the gateway is running on port 8000.</span></p></div>;
+  return <pre>{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function DecisionLedgerView({ onSelect }: { onSelect: (item: Evidence) => void }) {
+  const [records, setRecords] = useState<Record<string, unknown>[]>([]);
+  const [action, setAction] = useState("");
+  const [caseStatus, setCaseStatus] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => {
+    setLoading(true); setError(null);
+    const params = new URLSearchParams({ limit: "50" });
+    if (action) params.set("action", action.toLowerCase());
+    if (caseStatus) params.set("case_status", caseStatus);
+    fetch(`${apiBase}/v1/evidence?${params.toString()}`, { signal: AbortSignal.timeout(5000) })
+      .then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}`); setRecords(Array.isArray(body.records) ? body.records : []); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load evidence"))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [action, caseStatus]);
+  const exportLedger = () => { const blob = new Blob([JSON.stringify(records, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "tracelock-evidence.json"; anchor.click(); URL.revokeObjectURL(url); };
+  return <section className="service-view"><div className="service-hero"><div><div className="eyebrow lime-text"><span className="signal-line" /> Operational evidence</div><h1>Decision ledger</h1><p>Search real gateway decisions, inspect the evidence record, and move cases through review without exposing raw payloads.</p></div><button className="button button-primary" onClick={exportLedger}><Download size={16} /> Export evidence</button></div><div className="ledger-controls"><div><Filter size={15} /><select value={action} onChange={(event) => setAction(event.target.value)}><option value="">All actions</option><option value="ALLOW">Allow</option><option value="BLOCK">Block</option><option value="REDACT">Redact</option></select></div><div><ClipboardList size={15} /><select value={caseStatus} onChange={(event) => setCaseStatus(event.target.value)}><option value="">All case states</option><option value="open">Open</option><option value="acknowledged">Acknowledged</option><option value="investigating">Investigating</option><option value="closed">Closed</option></select></div><button className="button button-quiet" onClick={load}><RefreshCw size={15} /> Refresh</button></div><div className="panel ledger-panel"><div className="panel-heading compact"><div><span className="eyebrow">Evidence store</span><h2>{loading ? "Loading decisions" : `${records.length} records returned`}</h2></div><span className="panel-meta"><StatusDot /> Raw payloads omitted</span></div>{error ? <div className="service-error-copy"><CircleAlert size={20} /><p>{error}</p></div> : records.length === 0 && !loading ? <div className="empty-state"><FileCheck2 size={24} /><strong>No evidence records match this filter.</strong><span>Decisions will appear here after the gateway processes traffic.</span></div> : <div className="ledger-table"><div className="ledger-head"><span>Action</span><span>Reason</span><span>Workload → destination</span><span>Case</span><span /></div>{records.map((record, index) => { const item: Evidence = { id: String(record.decision_id ?? `record-${index}`), action: String(record.action ?? "UNKNOWN").toUpperCase(), reason: String(record.reason_code ?? "policy decision"), workload: String(record.workload_id ?? "unknown"), destination: String(record.destination_id ?? "unknown"), time: String(record.created_at ?? record.timestamp ?? "recent"), tone: String(record.action).toLowerCase() === "block" ? "red" : String(record.action).toLowerCase() === "redact" ? "amber" : "lime", detail: "Evidence details are available in the review drawer." }; return <button className="ledger-row" key={item.id} onClick={() => onSelect(item)}><strong className={`ledger-action ledger-${item.tone}`}>{item.action}</strong><span>{item.reason}</span><code>{item.workload} → {item.destination}</code><span>{String(record.case_status ?? "open")}</span><ChevronRight size={15} /></button>; })}</div>}</div></section>;
+}
+
+function BoundaryView() {
+  const [events, setEvents] = useState<unknown>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { fetch(`${apiBase}/v1/boundary-events`, { signal: AbortSignal.timeout(4000) }).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}`); setEvents(body); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load boundary events")).finally(() => setLoading(false)); }, []);
+  return <section className="service-view"><div className="service-hero"><div><div className="eyebrow lime-text"><span className="signal-line" /> Network enforcement</div><h1>Boundary map</h1><p>TraceLock controls the route from workload to gateway to registered destination. Direct bypass is denied by topology, not only by application logic.</p></div><div className="api-pill online"><StatusDot /> Gateway-only egress</div></div><div className="boundary-map"><div className="boundary-node"><Code2 size={21} /><strong>Workload</strong><span>identity verified</span></div><div className="boundary-connector"><span>enforced path</span><i /></div><div className="boundary-node boundary-node-active"><LockKeyhole size={21} /><strong>TraceLock gateway</strong><span>policy + evidence</span></div><div className="boundary-connector"><span>registered egress</span><i /></div><div className="boundary-node"><Database size={21} /><strong>Destination</strong><span>receipt expected</span></div></div><div className="panel boundary-events"><div className="panel-heading compact"><div><span className="eyebrow">Boundary events</span><h2>Observed enforcement signals</h2></div><Network size={20} className="service-icon" /></div><JsonState value={events} loading={loading} error={error} /></div></section>;
+}
+
+function PolicyView() {
+  const [policy, setPolicy] = useState<unknown>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [classification, setClassification] = useState("confidential"); const [destination, setDestination] = useState("external-webhook"); const [result, setResult] = useState("");
+  useEffect(() => { fetch(`${apiBase}/v1/policy`, { signal: AbortSignal.timeout(4000) }).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}`); setPolicy(body); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load policy")).finally(() => setLoading(false)); }, []);
+  const simulate = () => setResult(classification === "public" || destination.includes("internal") ? "DRY RUN: likely ALLOW path — verify with a real gateway request." : "DRY RUN: likely BLOCK or REDACT path — sensitive data is not assumed safe at external egress.");
+  return <section className="service-view"><div className="service-hero"><div><div className="eyebrow lime-text"><span className="signal-line" /> Policy intelligence</div><h1>Policy simulator</h1><p>Explore policy context without sending a receiver request. This screen is a simulation only; the gateway remains the final authority.</p></div><div className="api-pill"><StatusDot tone={error ? "red" : "lime"} /> {error ? "Policy unavailable" : "Policy loaded"}</div></div><div className="simulator-grid"><div className="panel simulator-form"><span className="eyebrow">Dry-run inputs</span><h2>Would this flow be safe?</h2><label>Data classification<select value={classification} onChange={(event) => setClassification(event.target.value)}><option value="public">Public</option><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option></select></label><label>Destination<select value={destination} onChange={(event) => setDestination(event.target.value)}><option value="warehouse-internal">warehouse-internal</option><option value="erp-gateway">erp-gateway</option><option value="external-webhook">external-webhook</option></select></label><button className="button button-primary" onClick={simulate}><Play size={15} /> Run dry simulation</button>{result && <div className="simulation-result"><StatusDot tone={result.includes("ALLOW") ? "lime" : "amber"} /><span>{result}</span></div>}</div><div className="panel"><div className="panel-heading compact"><div><span className="eyebrow">Active policy</span><h2>Loaded gateway policy</h2></div><FileCheck2 size={20} className="service-icon" /></div><JsonState value={policy} loading={loading} error={error} /></div></div></section>;
+}
+
+function AdminView() {
+  const [destinations, setDestinations] = useState<unknown>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { fetch(`${apiBase}/v1/destinations`, { signal: AbortSignal.timeout(4000) }).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}`); setDestinations(body); }).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load destinations")).finally(() => setLoading(false)); }, []);
+  return <section className="service-view"><div className="service-hero"><div><div className="eyebrow lime-text"><span className="signal-line" /> Operations</div><h1>Integrations</h1><p>Review registered destinations and the controlled egress points that TraceLock is allowed to reach.</p></div><div className="api-pill"><StatusDot /> Registered destinations</div></div><div className="admin-grid"><div className="panel admin-card"><div className="mini-icon lime-box"><Waypoints size={18} /></div><h2>Destinations</h2><p>Only registered destinations can receive authorized traffic through the gateway.</p><JsonState value={destinations} loading={loading} error={error} /></div><div className="panel admin-card"><div className="mini-icon blue-box"><Users size={18} /></div><h2>Workload identities</h2><p>Identity verification remains enforced before policy evaluation. Identity administration is ready for the next connected registry.</p><div className="empty-state"><Users size={22} /><span>No identity registry records exposed by the current API.</span></div></div></div></section>;
+}
+
+function SettingsView() {
+  const [apiUrl, setApiUrl] = useState(apiBase); const [saved, setSaved] = useState(false); const save = () => { localStorage.setItem("tracelock-api-url", apiUrl); setSaved(true); };
+  return <section className="service-view"><div className="service-hero"><div><div className="eyebrow lime-text"><span className="signal-line" /> Control Center configuration</div><h1>Settings</h1><p>Keep the dashboard pointed at the gateway you want to observe. This setting changes the frontend target only.</p></div><div className="api-pill"><StatusDot /> Local operator</div></div><div className="panel settings-card"><span className="eyebrow">Gateway connection</span><h2>API base URL</h2><div className="settings-row"><input value={apiUrl} onChange={(event) => { setApiUrl(event.target.value); setSaved(false); }} /><button className="button button-primary" onClick={save}>Save target</button></div>{saved && <div className="simulation-result"><StatusDot /><span>Saved locally. Reload the page to use the new target.</span></div>}<div className="settings-note"><Info size={16} /><span>Use the Docker Compose default `http://localhost:8000` unless you are connecting to another TraceLock environment.</span></div></div></section>;
+}
+
 export default function Home() {
   const [activeNav, setActiveNav] = useState("Overview");
   const [selected, setSelected] = useState<Evidence | null>(null);
   const [apiOnline, setApiOnline] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const [lastRefresh, setLastRefresh] = useState("just now");
+  const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(1600) })
-      .then((response) => setApiOnline(response.ok))
+    Promise.all([
+      fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(1600) }),
+      fetch(`${apiBase}/v1/status`, { signal: AbortSignal.timeout(2200) }),
+    ])
+      .then(async ([healthResponse, statusResponse]) => {
+        setApiOnline(healthResponse.ok);
+        if (statusResponse.ok) setLiveStatus(await statusResponse.json());
+      })
       .catch(() => setApiOnline(false));
   }, [lastRefresh]);
 
-  const counts = useMemo(() => ({ blocked: 14, released: 286, redacted: 31 }), []);
+  const boundary = (liveStatus?.boundary ?? {}) as Record<string, unknown>;
+  const capabilities = (liveStatus?.capabilities ?? {}) as Record<string, unknown>;
+  const evidenceCount = typeof boundary.evidence_count === "number" ? boundary.evidence_count : "—";
+  const eventCount = typeof boundary.event_count === "number" ? boundary.event_count : "—";
+  const governanceValid = boundary.governance_valid === true;
+  const evidenceReady = boundary.evidence_ready === true;
   const nav = [
     { label: "Overview", icon: Activity },
     { label: "Health", icon: HeartPulse },
@@ -170,13 +239,13 @@ export default function Home() {
       <main className="main-canvas">
         <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Control Center</span><ChevronRight size={14} /><strong>{activeNav}</strong></div><div className="top-actions"><div className={`api-pill ${apiOnline ? "online" : "demo"}`}><StatusDot tone={apiOnline ? "lime" : "amber"} />{apiOnline ? "Live gateway" : "Demo snapshot"}</div><button className="icon-button" onClick={() => setLastRefresh(new Date().toLocaleTimeString())} title="Refresh"><RefreshCw size={17} /></button><div className="avatar">VG</div></div></header>
         <div className="content-wrap">
-          {activeNav !== "Overview" && activeNav !== "Decision ledger" && activeNav !== "Policy & provenance" && activeNav !== "Network boundary" && activeNav !== "Integrations" && activeNav !== "Settings" ? <ServiceView title={activeNav} endpoint={activeNav === "Health" ? "/health" : activeNav === "Readiness" ? "/ready" : activeNav === "Gateway status" ? "/v1/status" : activeNav === "Governance" ? "/v1/governance" : "/v1/evidence"} description="A visual gateway view for checking TraceLock without leaving the Control Center." icon={activeNav === "Health" ? HeartPulse : activeNav === "Readiness" ? ListChecks : activeNav === "Gateway status" ? Server : activeNav === "Governance" ? ShieldCheck : Database} /> : null}
+          {activeNav === "Decision ledger" ? <DecisionLedgerView onSelect={setSelected} /> : activeNav === "Network boundary" ? <BoundaryView /> : activeNav === "Policy & provenance" ? <PolicyView /> : activeNav === "Integrations" ? <AdminView /> : activeNav === "Settings" ? <SettingsView /> : activeNav !== "Overview" ? <ServiceView title={activeNav} endpoint={activeNav === "Health" ? "/health" : activeNav === "Readiness" ? "/ready" : activeNav === "Gateway status" ? "/v1/status" : activeNav === "Governance" ? "/v1/governance" : "/v1/evidence"} description="A visual gateway view for checking TraceLock without leaving the Control Center." icon={activeNav === "Health" ? HeartPulse : activeNav === "Readiness" ? ListChecks : activeNav === "Gateway status" ? Server : activeNav === "Governance" ? ShieldCheck : Database} /> : null}
           {activeNav === "Overview" && <>
           <section className="intro-row"><div><div className="eyebrow lime-text"><span className="signal-line" /> System overview</div><h1>See what crossed<br /><i>the boundary.</i></h1><p className="intro-copy">TraceLock is the authorization and evidence layer for controlled data egress. It checks <strong>who is sending</strong>, <strong>what data is moving</strong>, and <strong>why the destination is allowed</strong>—before a request leaves.</p></div><div className="intro-actions"><button className="button button-primary" onClick={() => setActiveNav("Decision ledger")}><Search size={16} /> Inspect decisions</button><button className="button button-quiet" onClick={() => setActiveNav("Network boundary")}><BookOpen size={16} /> How it works</button></div></section>
 
           <section className="signal-panel"><div className="panel-heading"><div><span className="eyebrow">Live enforcement path</span><h2>Every release has a reason.</h2></div><div className="panel-meta"><StatusDot /> <span>Last signal {lastRefresh}</span></div></div><div className="flow-map"><div className="flow-line"><span className="line-track" /><span className="line-progress" /><span className="line-marker marker-one" /><span className="line-marker marker-two" /><span className="line-marker marker-three" /></div><FlowNode number="01" title="Workload" subtitle="identity verified" icon={Code2} /><FlowNode number="02" title="Gateway" subtitle="request buffered" icon={LockKeyhole} active /><FlowNode number="03" title="Policy" subtitle="v2.4 / matched" icon={FileCheck2} active /><FlowNode number="04" title="Destination" subtitle="registered / safe" icon={Database} active /></div><div className="signal-footer"><span><StatusDot /> Direct bypass <strong>denied</strong></span><span><StatusDot /> Evidence store <strong>durable</strong></span><span><StatusDot tone="amber" /> Review queue <strong>4 items</strong></span></div></section>
 
-          <section className="metrics-grid"><Metric label="Requests observed" value="331" note="last 24 hours · +12.4%" icon={Activity} /><Metric label="Released safely" value={`${counts.released}`} note="86.4% of observed flow" icon={ShieldCheck} /><Metric label="Blocked at boundary" value={`${counts.blocked}`} note="zero receiver requests" tone="red" icon={CircleAlert} /><Metric label="Evidence latency" value="18ms" note="p95 · within target" icon={Gauge} /></section>
+          <section className="metrics-grid"><Metric label="Boundary events" value={`${eventCount}`} note="reported by gateway" icon={Activity} /><Metric label="Evidence records" value={`${evidenceCount}`} note={evidenceReady ? "durable store ready" : "store status unavailable"} tone={evidenceReady ? "lime" : "amber"} icon={ShieldCheck} /><Metric label="Governance posture" value={liveStatus ? (governanceValid ? "VALID" : "CHECK") : "—"} note="derived from /v1/status" tone={governanceValid ? "lime" : "amber"} icon={CircleAlert} /><Metric label="Policy engine" value={liveStatus ? (capabilities.deterministic_policy ? "READY" : "CHECK") : "—"} note="deterministic evaluation" tone={capabilities.deterministic_policy ? "lime" : "amber"} icon={Gauge} /></section>
 
           <section className="lower-grid"><div className="panel evidence-panel"><div className="panel-heading compact"><div><span className="eyebrow">Decision ledger</span><h2>Recent enforcement signals</h2></div><button className="text-button" onClick={() => setActiveNav("Decision ledger")}>View ledger <ArrowUpRight size={14} /></button></div><div className="evidence-list">{demoEvidence.map((item) => <EvidenceRow key={item.id} item={item} onSelect={setSelected} />)}</div></div><div className="panel explain-panel"><div className="explain-art"><img src="/manus-storage/tracelock-evidence-tray_9ee0dc01.jpg" alt="Evidence tray illustration" /><div className="art-overlay" /></div><div className="explain-copy"><span className="eyebrow lime-text">Evidence, without leakage</span><h2>Prove the decision<br />without storing the payload.</h2><p>TraceLock records hashes, policy versions, classifications, and receiver receipts. It never needs to put the raw body into your audit trail.</p><button className="text-button" onClick={() => setActiveNav("Decision ledger")}>Explore evidence <ArrowUpRight size={14} /></button></div></div></section>
 
