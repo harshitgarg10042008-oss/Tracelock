@@ -14,6 +14,9 @@ import {
   Fingerprint,
   Gauge,
   GitBranch,
+  HeartPulse,
+  ListChecks,
+  Server,
   Info,
   Layers3,
   LockKeyhole,
@@ -84,6 +87,48 @@ function EvidenceRow({ item, onSelect }: { item: Evidence; onSelect: (item: Evid
   );
 }
 
+function ServiceView({ title, endpoint, description, icon: Icon }: { title: string; endpoint: string; description: string; icon: typeof Activity }) {
+  const [payload, setPayload] = useState<unknown>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState("");
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    fetch(`${apiBase}${endpoint}`, { signal: AbortSignal.timeout(4000) })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(`Gateway returned HTTP ${response.status}`);
+        setPayload(body);
+        setUpdatedAt(new Date().toLocaleTimeString());
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to reach the gateway"))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [endpoint]);
+
+  const healthy = !error && !loading;
+  return (
+    <section className="service-view">
+      <div className="service-hero">
+        <div>
+          <div className="eyebrow lime-text"><span className="signal-line" /> Gateway service</div>
+          <h1>{title}</h1>
+          <p>{description}</p>
+        </div>
+        <button className="button button-primary" onClick={load}><RefreshCw size={16} /> Refresh service</button>
+      </div>
+      <div className="service-toolbar"><span className={`service-status ${healthy ? "service-ok" : error ? "service-error" : "service-loading"}`}><StatusDot tone={healthy ? "lime" : error ? "red" : "amber"} /> {loading ? "Checking service" : error ? "Service unavailable" : "Service responding"}</span><code>{endpoint}</code>{updatedAt && <span>updated {updatedAt}</span>}</div>
+      <div className="service-grid">
+        <div className="panel service-response"><div className="panel-heading compact"><div><span className="eyebrow">Response</span><h2>{error ? "Could not read gateway" : "Live gateway payload"}</h2></div><Icon size={21} className="service-icon" /></div>{error ? <div className="service-error-copy"><CircleAlert size={20} /><p>{error}<br /><span>Make sure the backend is running on port 8000.</span></p></div> : <pre>{loading ? "Loading…" : JSON.stringify(payload, null, 2)}</pre>}</div>
+        <div className="panel service-guide"><span className="eyebrow lime-text">What this view means</span><h2>Operate from the boundary.</h2><p>{endpoint === "/health" ? "Health confirms that the gateway process is alive." : endpoint === "/ready" ? "Readiness confirms that the gateway can serve traffic under its current configuration." : endpoint === "/v1/status" ? "Status summarizes the running TraceLock control plane and enforcement posture." : endpoint === "/v1/governance" ? "Governance shows whether evidence, policy, and production controls meet their operating requirements." : "Evidence is the durable decision trail. Raw payload values are intentionally excluded."}</p><div className="service-actions"><button className="button button-quiet" onClick={() => navigator.clipboard?.writeText(`${apiBase}${endpoint}`)}><Code2 size={15} /> Copy endpoint</button><a className="button button-quiet" href={`${apiBase}${endpoint}`} target="_blank" rel="noreferrer"><ArrowUpRight size={15} /> Open raw response</a></div></div>
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
   const [activeNav, setActiveNav] = useState("Overview");
   const [selected, setSelected] = useState<Evidence | null>(null);
@@ -100,6 +145,11 @@ export default function Home() {
   const counts = useMemo(() => ({ blocked: 14, released: 286, redacted: 31 }), []);
   const nav = [
     { label: "Overview", icon: Activity },
+    { label: "Health", icon: HeartPulse },
+    { label: "Readiness", icon: ListChecks },
+    { label: "Gateway status", icon: Server },
+    { label: "Governance", icon: ShieldCheck },
+    { label: "Evidence API", icon: Database },
     { label: "Decision ledger", icon: FileCheck2 },
     { label: "Policy & provenance", icon: Fingerprint },
     { label: "Network boundary", icon: Network },
@@ -120,6 +170,8 @@ export default function Home() {
       <main className="main-canvas">
         <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(true)}><Menu size={20} /></button><div className="breadcrumb"><span>Control Center</span><ChevronRight size={14} /><strong>{activeNav}</strong></div><div className="top-actions"><div className={`api-pill ${apiOnline ? "online" : "demo"}`}><StatusDot tone={apiOnline ? "lime" : "amber"} />{apiOnline ? "Live gateway" : "Demo snapshot"}</div><button className="icon-button" onClick={() => setLastRefresh(new Date().toLocaleTimeString())} title="Refresh"><RefreshCw size={17} /></button><div className="avatar">VG</div></div></header>
         <div className="content-wrap">
+          {activeNav !== "Overview" && activeNav !== "Decision ledger" && activeNav !== "Policy & provenance" && activeNav !== "Network boundary" && activeNav !== "Integrations" && activeNav !== "Settings" ? <ServiceView title={activeNav} endpoint={activeNav === "Health" ? "/health" : activeNav === "Readiness" ? "/ready" : activeNav === "Gateway status" ? "/v1/status" : activeNav === "Governance" ? "/v1/governance" : "/v1/evidence"} description="A visual gateway view for checking TraceLock without leaving the Control Center." icon={activeNav === "Health" ? HeartPulse : activeNav === "Readiness" ? ListChecks : activeNav === "Gateway status" ? Server : activeNav === "Governance" ? ShieldCheck : Database} /> : null}
+          {activeNav === "Overview" && <>
           <section className="intro-row"><div><div className="eyebrow lime-text"><span className="signal-line" /> System overview</div><h1>See what crossed<br /><i>the boundary.</i></h1><p className="intro-copy">TraceLock is the authorization and evidence layer for controlled data egress. It checks <strong>who is sending</strong>, <strong>what data is moving</strong>, and <strong>why the destination is allowed</strong>—before a request leaves.</p></div><div className="intro-actions"><button className="button button-primary" onClick={() => setActiveNav("Decision ledger")}><Search size={16} /> Inspect decisions</button><button className="button button-quiet" onClick={() => setActiveNav("Network boundary")}><BookOpen size={16} /> How it works</button></div></section>
 
           <section className="signal-panel"><div className="panel-heading"><div><span className="eyebrow">Live enforcement path</span><h2>Every release has a reason.</h2></div><div className="panel-meta"><StatusDot /> <span>Last signal {lastRefresh}</span></div></div><div className="flow-map"><div className="flow-line"><span className="line-track" /><span className="line-progress" /><span className="line-marker marker-one" /><span className="line-marker marker-two" /><span className="line-marker marker-three" /></div><FlowNode number="01" title="Workload" subtitle="identity verified" icon={Code2} /><FlowNode number="02" title="Gateway" subtitle="request buffered" icon={LockKeyhole} active /><FlowNode number="03" title="Policy" subtitle="v2.4 / matched" icon={FileCheck2} active /><FlowNode number="04" title="Destination" subtitle="registered / safe" icon={Database} active /></div><div className="signal-footer"><span><StatusDot /> Direct bypass <strong>denied</strong></span><span><StatusDot /> Evidence store <strong>durable</strong></span><span><StatusDot tone="amber" /> Review queue <strong>4 items</strong></span></div></section>
@@ -130,6 +182,7 @@ export default function Home() {
 
           <section className="bottom-grid"><div className="mini-card"><div className="mini-icon lime-box"><Fingerprint size={18} /></div><div><span className="eyebrow">Trusted provenance</span><strong>Classification is sticky</strong><p>Renaming or encoding a field cannot quietly lower its sensitivity.</p></div><ArrowUpRight size={16} /></div><div className="mini-card"><div className="mini-icon amber-box"><Zap size={18} /></div><div><span className="eyebrow">Transformation</span><strong>Redact, reclassify, re-evaluate</strong><p>Allowed transformations are checked again before release.</p></div><ArrowUpRight size={16} /></div><div className="mini-card"><div className="mini-icon blue-box"><TerminalSquare size={18} /></div><div><span className="eyebrow">Honest boundary</span><strong>What TraceLock cannot see</strong><p>Traffic outside the enforced gateway path is marked unmonitored.</p></div><ArrowUpRight size={16} /></div></section>
           <footer className="footer"><span>TraceLock Control Center · local demonstration</span><span><StatusDot /> All core controls operational</span></footer>
+          </>}
         </div>
       </main>
 
