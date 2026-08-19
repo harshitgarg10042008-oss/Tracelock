@@ -330,6 +330,53 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "service": runtime.service_name}
 
+    @app.get("/metrics", tags=["service"])
+    def metrics() -> StreamingResponse:
+        body = "\\n".join(
+            [
+                "# HELP tracelock_evidence_records_total Durable evidence records.",
+                "# TYPE tracelock_evidence_records_total gauge",
+                f"tracelock_evidence_records_total {evidence.count()}",
+                "# HELP tracelock_boundary_events_total Observed boundary events.",
+                "# TYPE tracelock_boundary_events_total gauge",
+                f"tracelock_boundary_events_total {len(events.list())}",
+                "",
+            ]
+        )
+        return StreamingResponse(iter([body]), media_type="text/plain; version=0.0.4")
+
+    @app.get("/v1/workspaces", tags=["saas"])
+    def workspaces() -> dict[str, Any]:
+        return {
+            "workspaces": [
+                {
+                    "workspace_id": "local",
+                    "name": "Local gateway",
+                    "environment": runtime.environment,
+                    "status": "active",
+                }
+            ]
+        }
+
+    @app.get("/v1/integrations", tags=["integrations"])
+    def integrations() -> dict[str, Any]:
+        return {
+            "integrations": [
+                {"integration_id": "local-events", "type": "sse", "status": "active"},
+                {"integration_id": "metrics", "type": "prometheus", "status": "active"},
+            ]
+        }
+
+    @app.get("/v1/usage", tags=["saas"])
+    def usage() -> dict[str, Any]:
+        return {
+            "workspace_id": "local",
+            "evidence_records": evidence.count(),
+            "boundary_events": len(events.list()),
+            "active_workloads": 1,
+            "plan": "local-development",
+        }
+
     @app.get("/v1/status", tags=["service"])
     def status() -> dict[str, Any]:
         return {

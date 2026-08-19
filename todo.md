@@ -1,8 +1,9 @@
-# Complete authentication flow
+# TraceLock 15-feature roadmap
 
-- [x] Audit current auth endpoints and frontend session handling.
-- [x] Add session expiry and invalid-session handling.
-- [x] Add protected frontend access states and role-aware controls.
-- [x] Add sign-in persistence and explicit sign-out behavior.
-- [x] Run backend security tests and frontend build checks.
-- [x] Commit and push the authentication implementation.
+- [x] Audit all 15 feature areas against the current repository and available infrastructure.
+- [x] Implement core protection, policy, workload, destination, testing, and evidence improvements.
+- [x] Implement live monitoring, incidents, auth, teams, governance, and SaaS controls.
+- [x] Implement local integrations, reliability checks, developer tooling, and product polish.
+- [x] Run complete backend, frontend, security, and Compose checks.
+- [x] Fix every reproducible repository error.
+- [ ] Commit and push the validated implementation to GitHub.
