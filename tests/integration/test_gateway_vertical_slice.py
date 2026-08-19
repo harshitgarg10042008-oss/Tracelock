@@ -7,6 +7,13 @@ from tracelock_services.app import ServiceConfig, create_app
 from tracelock_services.destinations import DestinationRegistry, RegisteredDestination
 from tracelock_services.gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
 from tracelock_services.identity import WorkloadCredentialVerifier, issue_demo_token
+from tracelock_services.policy import (
+    PolicyAction,
+    PolicyBundle,
+    PolicyEngine,
+    PolicyRule,
+    sign_bundle,
+)
 from tracelock_services.provenance import (
     ProvenanceLabel,
     TrustedProvenanceVerifier,
@@ -77,6 +84,39 @@ def make_gateway() -> tuple[Gateway, InMemoryReceiverTransport]:
         signing_key=PROVENANCE_KEY,
         approved_integrations={"analytics-source"},
     )
+    unsigned_policy = PolicyBundle(
+        policy_id="phase7-test-policy",
+        version=1,
+        issued_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        rules=(
+            PolicyRule(
+                rule_id="allow-test-aggregate",
+                priority=100,
+                action=PolicyAction.ALLOW,
+                reason_code="test_policy_allow",
+                workload_id="analytics-workload",
+                destination_id="analytics.internal",
+                destination_environment="internal",
+                purpose="business-analytics",
+                operation="aggregate",
+                classification_any=(Classification.INTERNAL,),
+                provenance_confidence="trusted",
+            ),
+        ),
+        default_actions={
+            Classification.PUBLIC: PolicyAction.BLOCK,
+            Classification.INTERNAL: PolicyAction.BLOCK,
+            Classification.CONFIDENTIAL: PolicyAction.BLOCK,
+            Classification.RESTRICTED: PolicyAction.BLOCK,
+            Classification.UNKNOWN: PolicyAction.BLOCK,
+        },
+        signature="",
+    )
+    policy_key = "phase7-policy-test-key-with-at-least-32-bytes!!"
+    policy_engine = PolicyEngine(
+        sign_bundle(unsigned_policy, policy_key), signing_key=policy_key
+    )
     transport = InMemoryReceiverTransport(("analytics.internal",))
     return (
         Gateway(
@@ -85,6 +125,7 @@ def make_gateway() -> tuple[Gateway, InMemoryReceiverTransport]:
             transport=transport,
             resolver=lambda _host, _port: ["93.184.216.34"],
             provenance_verifier=provenance_verifier,
+            policy_engine=policy_engine,
         ),
         transport,
     )
@@ -113,7 +154,7 @@ def test_approved_request_is_sent_and_receiver_receipt_is_recorded() -> None:
     decision = gateway.authorize_and_send(request())
 
     assert decision.action == "allow"
-    assert decision.reason_code == "identity_destination_and_provenance_verified"
+    assert decision.reason_code == "policy_allowed"
     assert decision.sent is True
     assert decision.receipt_status == "received"
     assert decision.receiver_request_count == 1

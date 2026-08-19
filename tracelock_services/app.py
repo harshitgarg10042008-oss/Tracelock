@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Header
 from pydantic import BaseModel
 
+from tracelock_core.contracts import Classification
+
 from .boundary import BoundaryEventStore
 from .destinations import DestinationRegistry, RegisteredDestination
 from .gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
 from .identity import WorkloadCredentialVerifier
+from .policy import (
+    PolicyAction,
+    PolicyBundle,
+    PolicyEngine,
+    PolicyRule,
+    sign_bundle,
+)
 from .provenance import TrustedProvenanceVerifier
 
 
@@ -29,6 +39,7 @@ class ServiceConfig:
     provenance_issuer: str = "tracelock-local-provenance"
     provenance_audience: str = "tracelock-gateway"
     provenance_signing_key: str = "local-development-provenance-key-change-me"
+    policy_signing_key: str = "local-development-policy-key-change-me"
 
     @classmethod
     def from_environment(cls) -> ServiceConfig:
@@ -49,6 +60,7 @@ class ServiceConfig:
             provenance_signing_key=os.getenv(
                 "TRACELOCK_PROVENANCE_SIGNING_KEY", cls.provenance_signing_key
             ),
+            policy_signing_key=os.getenv("TRACELOCK_POLICY_SIGNING_KEY", cls.policy_signing_key),
         )
 
 
@@ -99,6 +111,48 @@ def _default_destinations() -> tuple[RegisteredDestination, ...]:
     )
 
 
+def _default_policy(signing_key: str) -> PolicyBundle:
+    unsigned = PolicyBundle(
+        policy_id="tracelock-local-policy",
+        version=1,
+        issued_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+        rules=(
+            PolicyRule(
+                rule_id="allow-internal-aggregate",
+                priority=100,
+                action=PolicyAction.ALLOW,
+                reason_code="approved_internal_aggregate",
+                workload_id="analytics-workload",
+                destination_id="analytics.internal",
+                destination_environment="internal",
+                purpose="business-analytics",
+                operation="aggregate",
+                classification_any=(Classification.INTERNAL,),
+                provenance_confidence="trusted",
+                minimum_group_size=1,
+            ),
+            PolicyRule(
+                rule_id="block-external-confidential",
+                priority=80,
+                action=PolicyAction.BLOCK,
+                reason_code="confidential_data_external_destination",
+                destination_environment="external",
+                classification_any=(Classification.CONFIDENTIAL, Classification.RESTRICTED),
+            ),
+        ),
+        default_actions={
+            Classification.PUBLIC: PolicyAction.ALLOW,
+            Classification.INTERNAL: PolicyAction.BLOCK,
+            Classification.CONFIDENTIAL: PolicyAction.BLOCK,
+            Classification.RESTRICTED: PolicyAction.BLOCK,
+            Classification.UNKNOWN: PolicyAction.BLOCK,
+        },
+        signature="",
+    )
+    return sign_bundle(unsigned, signing_key)
+
+
 def create_app(config: ServiceConfig | None = None) -> FastAPI:
     runtime = config or ServiceConfig.from_environment()
     events = BoundaryEventStore()
@@ -115,6 +169,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         signing_key=runtime.provenance_signing_key,
         approved_integrations={"analytics-source"},
     )
+    policy_bundle = _default_policy(runtime.policy_signing_key)
+    policy_engine = PolicyEngine(policy_bundle, signing_key=runtime.policy_signing_key)
     transport = InMemoryReceiverTransport(tuple(item.destination_id for item in destinations.all()))
     gateway = Gateway(
         verifier=verifier,
@@ -122,6 +178,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         transport=transport,
         resolver=lambda _host, _port: ["93.184.216.34"],
         provenance_verifier=provenance_verifier,
+        policy_engine=policy_engine,
     )
     app = FastAPI(
         title="TraceLock",
@@ -133,6 +190,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     app.state.destination_registry = destinations
     app.state.identity_verifier = verifier
     app.state.provenance_verifier = provenance_verifier
+    app.state.policy_engine = policy_engine
     app.state.gateway = gateway
     app.state.receiver_transport = transport
 
@@ -160,18 +218,29 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 "network_enforcement": runtime.service_role == "gateway",
                 "identity_verification": True,
                 "destination_registration": True,
-                "trusted_provenance": True,
-                "sticky_classification": True,
+            "trusted_provenance": True,
+            "sticky_classification": True,
+            "deterministic_policy": True,
                 "gateway_vertical_slice": True,
                 "receiver_evidence": True,
                 "persistence": False,
-                "policy_evaluation": False,
+                "policy_evaluation": True,
             },
             "boundary": {
                 "mode": "gateway-only-egress-topology",
                 "direct_bypass": "denied-by-network-policy",
                 "event_count": len(events.list()),
             },
+        }
+
+    @app.get("/v1/policy", tags=["policy"])
+    def policy_status() -> dict[str, Any]:
+        return {
+            "policy_id": policy_bundle.policy_id,
+            "version": policy_bundle.version,
+            "status": policy_bundle.status,
+            "expires_at": policy_bundle.expires_at.isoformat(),
+            "signature_present": bool(policy_bundle.signature),
         }
 
     @app.get("/v1/boundary-events", tags=["boundary"])

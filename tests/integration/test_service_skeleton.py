@@ -47,6 +47,7 @@ def test_status_makes_unimplemented_capabilities_explicit() -> None:
         "sticky_classification": True,
         "gateway_vertical_slice": True,
         "receiver_evidence": True,
+        "deterministic_policy": True,
         "persistence": False,
-        "policy_evaluation": False,
+        "policy_evaluation": True,
     }

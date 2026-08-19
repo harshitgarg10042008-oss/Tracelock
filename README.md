@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 6 — trusted provenance and sticky classification.**
+**Current phase: Phase 7 — deterministic policy engine.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -55,7 +55,7 @@ tracelock/
 ├── .github/workflows/       # Continuous integration
 ├── docs/                    # Architecture, scope, and decision records
 ├── infra/docker/            # Local container image definition
-├── policies/                # Example policies and test fixtures
+├── policies/                # Typed example policies and test fixtures
 ├── scripts/                 # Local development and bypass helpers
 ├── services/                # Reserved service deployment boundaries
 ├── tests/                   # Unit and integration tests
@@ -76,9 +76,9 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 6 implementation
+## Phase 7 implementation
 
-Phase 6 extends the gateway vertical slice with trusted provenance and sticky field classification. A signed provenance manifest from an approved source integration must label the payload’s canonical field paths. Missing or unknown field provenance blocks release. Renaming a field or using an unsupported representation does not silently reduce sensitivity, while encoding a value at the same trusted path preserves its classification.
+Phase 7 adds a typed deterministic policy evaluator after identity, destination, trusted provenance, and sticky classification checks. Signed policy bundles include a policy ID, version, expiry, typed rules, defaults, status, and signature. Expired, inactive, unsigned, or invalidly signed bundles fail closed.
 
 The gateway still uses:
 
@@ -86,7 +86,7 @@ The gateway still uses:
 POST /v1/egress/authorize-and-send
 ```
 
-The provenance manifest is supplied through `X-TraceLock-Provenance`. Decisions include classification summary and provenance confidence but never raw payload values, credentials, or provenance tokens. The Phase 5 identity, destination, receiver, and boundary endpoints remain available.
+The provenance manifest is supplied through `X-TraceLock-Provenance`. Policy decisions include policy ID, version, matched rule, reason, classification summary, and provenance confidence without raw payload values, credentials, or provenance tokens. The Phase 6 identity, destination, receiver, and boundary endpoints remain available.
 
 The available endpoints are:
 
@@ -109,7 +109,7 @@ Or start the four-role local topology:
 docker compose -f compose.yaml up --build
 ```
 
-The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, and Phase 6 enforces trusted provenance with sticky classification. Policy precedence, redaction, durable evidence, and production security guarantees remain future work.
+The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, and Phase 7 evaluates a signed deterministic policy before receiver release. Redaction, durable evidence, policy governance, and production security guarantees remain future work.
 
 Verify direct bypass denial after starting Compose:
 
@@ -119,9 +119,9 @@ docker compose -f compose.yaml exec workload python scripts/check_direct_bypass.
 
 A connection error is the expected result. A successful connection indicates that the local boundary has failed.
 
-## Phase 6 exit criteria
+## Phase 7 exit criteria
 
-Phase 6 is complete when:
+Phase 7 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -145,11 +145,15 @@ Phase 6 is complete when:
 - Provenance requires an approved signed source integration.
 - Unknown or renamed field paths are not treated as less sensitive.
 - Encoded values retain their trusted classification at the same field path.
+- Matching policies produce deterministic actions and reason codes.
+- Block rules dominate allows and equal-priority conflicts fail closed.
+- Expired or invalidly signed policies cannot authorize release.
+- Policy metadata is present in gateway decisions.
 - Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 6
+## Explicit non-goals for Phase 7
 
-Phase 6 does not implement a full lineage engine, arbitrary transformation propagation, classification-aware policy precedence, redaction, durable evidence, retries, idempotency, real downstream HTTP transport, response inspection, a database, a dashboard, policy signing, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
+Phase 7 does not implement policy approval workflows, asymmetric signing, policy distribution and rollback, redaction execution, durable policy history, a complete external policy-file parser, durable evidence, retries, idempotency, real downstream HTTP transport, response inspection, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
 
 ## Local development
 

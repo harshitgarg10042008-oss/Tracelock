@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from .destinations import DestinationRegistry
 from .identity import WorkloadCredentialVerifier
+from .policy import PolicyAction, PolicyEngine, PolicyInput
 from .provenance import TrustedProvenanceVerifier, classify_payload
 
 
@@ -74,6 +75,9 @@ class GatewayDecision:
     body_sha256: str | None
     classification_summary: tuple[str, ...] = ()
     provenance_confidence: str = "unknown"
+    policy_id: str | None = None
+    policy_version: int | None = None
+    matched_rule_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -91,6 +95,9 @@ class GatewayDecision:
             "body_sha256": self.body_sha256,
             "classification_summary": list(self.classification_summary),
             "provenance_confidence": self.provenance_confidence,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "matched_rule_id": self.matched_rule_id,
         }
 
 
@@ -152,6 +159,7 @@ class Gateway:
         transport: ReceiverTransport,
         resolver: Callable[[str, int], list[str]],
         provenance_verifier: TrustedProvenanceVerifier,
+        policy_engine: PolicyEngine,
         max_body_bytes: int = 1_048_576,
         max_depth: int = 20,
     ) -> None:
@@ -160,6 +168,7 @@ class Gateway:
         self.transport = transport
         self.resolver = resolver
         self.provenance_verifier = provenance_verifier
+        self.policy_engine = policy_engine
         self.max_body_bytes = max_body_bytes
         self.max_depth = max_depth
 
@@ -242,6 +251,43 @@ class Gateway:
                 classification.summary,
             )
 
+        registered = self.destinations.get(request.destination_id)
+        if registered is None:
+            return self._blocked(
+                request,
+                decision_id,
+                flow_id,
+                "unregistered_destination",
+                GatewayAction.BLOCK,
+                body_sha256,
+                classification.summary,
+            )
+        policy = self.policy_engine.evaluate(
+            PolicyInput(
+                workload_id=request.workload_id,
+                destination_id=request.destination_id,
+                destination_environment=registered.environment,
+                purpose=request.purpose,
+                operation=request.operation,
+                classifications=classification.summary,
+                field_paths=tuple(label.field_path for label in provenance.labels),
+                provenance_confidence="trusted",
+            )
+        )
+        if policy.action is not PolicyAction.ALLOW:
+            return self._blocked(
+                request,
+                decision_id,
+                flow_id,
+                policy.reason_code,
+                GatewayAction.BLOCK,
+                body_sha256,
+                classification.summary,
+                policy.policy_id,
+                policy.policy_version,
+                policy.matched_rule_id,
+            )
+
         receipt = self.transport.send(
             request_id=request.request_id,
             destination_id=request.destination_id,
@@ -255,7 +301,7 @@ class Gateway:
             decision_id,
             flow_id,
             GatewayAction.ALLOW,
-            "identity_destination_and_provenance_verified",
+            "policy_allowed",
             request.destination_id,
             request.workload_id,
             receipt.status is ReceiptStatus.RECEIVED,
@@ -264,6 +310,9 @@ class Gateway:
             body_sha256,
             tuple(item.value for item in classification.summary),
             "trusted",
+            self.policy_engine.bundle.policy_id,
+            self.policy_engine.bundle.version,
+            None,
         )
 
     def _blocked(
@@ -275,6 +324,9 @@ class Gateway:
         action: GatewayAction,
         body_sha256: str | None,
         classification_summary: tuple[Any, ...] = (),
+        policy_id: str | None = None,
+        policy_version: int | None = None,
+        matched_rule_id: str | None = None,
     ) -> GatewayDecision:
         return GatewayDecision(
             request.request_id,
@@ -293,6 +345,9 @@ class Gateway:
                 for item in classification_summary
             ),
             "trusted" if classification_summary else "unknown",
+            policy_id,
+            policy_version,
+            matched_rule_id,
         )
 
     def _validate_body(self, body: Any, body_sha256: str | None) -> str | None:

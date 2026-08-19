@@ -1,0 +1,29 @@
+id: tracelock-local-policy
+version: 1
+status: active
+expires_at: 2099-01-01T00:00:00Z
+rules:
+  - id: allow-internal-aggregate
+    priority: 100
+    action: allow
+    reason_code: approved_internal_aggregate
+    workload_id: analytics-workload
+    destination_id: analytics.internal
+    destination_environment: internal
+    purpose: business-analytics
+    operation: aggregate
+    classification_any: [internal]
+    provenance_confidence: trusted
+    minimum_group_size: 1
+  - id: block-external-confidential
+    priority: 80
+    action: block
+    reason_code: confidential_data_external_destination
+    destination_environment: external
+    classification_any: [confidential, restricted]
+default_actions:
+  public: allow
+  internal: block
+  confidential: block
+  restricted: block
+  unknown: block
