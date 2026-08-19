@@ -20,6 +20,20 @@ services:
       - egress-path
       - control-path
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    networks:
+      - host-facing
+    depends_on:
+      - gateway
+
   workload:
     build:
       context: .

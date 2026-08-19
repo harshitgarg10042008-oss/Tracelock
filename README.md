@@ -210,3 +210,25 @@ pnpm run build
 ```
 
 The frontend is intentionally kept separate from the Python gateway so the backend can continue to run through Docker Compose while the dashboard runs through Vite. The dashboard source is in `frontend/client/`; generated dependencies and build output are excluded from version control.
+
+## One-command startup
+
+The backend and visual Control Center are integrated into the same Docker Compose stack. From the repository root, with Docker Desktop running, use:
+
+```powershell
+docker compose -f compose.yaml up --build
+```
+
+The dashboard is available at `http://localhost:3000`, and the gateway API is available at `http://localhost:8000`. To run the stack in the background, add `-d`:
+
+```powershell
+docker compose -f compose.yaml up --build -d
+```
+
+To stop all services:
+
+```powershell
+docker compose -f compose.yaml down
+```
+
+The frontend is attached to the host-facing network only. It does not weaken the workload-to-destination boundary: the workload remains on `workload-path`, the destination remains on `egress-path`, and the gateway remains the controlled bridge between them.
