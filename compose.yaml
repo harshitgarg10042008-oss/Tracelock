@@ -9,6 +9,9 @@ services:
       TRACELOCK_SERVICE_NAME: tracelock-gateway
       TRACELOCK_SERVICE_ROLE: gateway
       TRACELOCK_ENVIRONMENT: local
+      TRACELOCK_EVIDENCE_DB: /var/lib/tracelock/evidence.db
+    volumes:
+      - evidence-data:/var/lib/tracelock
     ports:
       - "8000:8000"
     networks:
@@ -54,6 +57,9 @@ services:
       - egress-path
     depends_on:
       - gateway
+
+volumes:
+  evidence-data:
 
 networks:
   workload-path:

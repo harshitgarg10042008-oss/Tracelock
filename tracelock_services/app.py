@@ -15,6 +15,7 @@ from tracelock_core.contracts import Classification
 
 from .boundary import BoundaryEventStore
 from .destinations import DestinationRegistry, RegisteredDestination
+from .evidence import EvidenceStore
 from .gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
 from .identity import WorkloadCredentialVerifier
 from .policy import (
@@ -40,6 +41,8 @@ class ServiceConfig:
     provenance_audience: str = "tracelock-gateway"
     provenance_signing_key: str = "local-development-provenance-key-change-me"
     policy_signing_key: str = "local-development-policy-key-change-me"
+    evidence_db_path: str = ":memory:"
+    operator_token: str = "local-operator-token-change-me"
 
     @classmethod
     def from_environment(cls) -> ServiceConfig:
@@ -61,6 +64,8 @@ class ServiceConfig:
                 "TRACELOCK_PROVENANCE_SIGNING_KEY", cls.provenance_signing_key
             ),
             policy_signing_key=os.getenv("TRACELOCK_POLICY_SIGNING_KEY", cls.policy_signing_key),
+            evidence_db_path=os.getenv("TRACELOCK_EVIDENCE_DB", cls.evidence_db_path),
+            operator_token=os.getenv("TRACELOCK_OPERATOR_TOKEN", cls.operator_token),
         )
 
 
@@ -71,6 +76,19 @@ class IdentityVerifyRequest(BaseModel):
 
 class ProvenanceVerifyRequest(BaseModel):
     token: str
+
+
+class EvidenceSearchRequest(BaseModel):
+    action: str | None = None
+    case_status: str | None = None
+    workload_id: str | None = None
+    destination_id: str | None = None
+    limit: int = 50
+
+
+class OperatorCaseUpdate(BaseModel):
+    case_status: str
+    operator_note: str | None = None
 
 
 class DestinationValidateRequest(BaseModel):
@@ -190,6 +208,7 @@ def _default_policy(signing_key: str) -> PolicyBundle:
 def create_app(config: ServiceConfig | None = None) -> FastAPI:
     runtime = config or ServiceConfig.from_environment()
     events = BoundaryEventStore()
+    evidence = EvidenceStore(runtime.evidence_db_path)
     destinations = DestinationRegistry(_default_destinations())
     verifier = WorkloadCredentialVerifier(
         issuer=runtime.identity_issuer,
@@ -221,6 +240,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     )
     app.state.config = runtime
     app.state.boundary_events = events
+    app.state.evidence_store = evidence
     app.state.destination_registry = destinations
     app.state.identity_verifier = verifier
     app.state.provenance_verifier = provenance_verifier
@@ -266,6 +286,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 "mode": "gateway-only-egress-topology",
                 "direct_bypass": "denied-by-network-policy",
                 "event_count": len(events.list()),
+                "evidence_count": len(evidence.search(limit=200)),
             },
         }
 
@@ -278,6 +299,51 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "expires_at": policy_bundle.expires_at.isoformat(),
             "signature_present": bool(policy_bundle.signature),
         }
+
+    @app.get("/v1/evidence", tags=["evidence"])
+    def search_evidence(
+        action: str | None = None,
+        case_status: str | None = None,
+        workload_id: str | None = None,
+        destination_id: str | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        records = evidence.search(
+            action=action,
+            case_status=case_status,
+            workload_id=workload_id,
+            destination_id=destination_id,
+            limit=limit,
+        )
+        return {"records": [record.as_dict() for record in records]}
+
+    @app.get("/v1/evidence/{decision_id}", tags=["evidence"])
+    def get_evidence(decision_id: str) -> dict[str, Any]:
+        record = evidence.get(decision_id)
+        if record is None:
+            return {"error": "evidence_not_found"}
+        return record.as_dict()
+
+    @app.post("/v1/evidence/{decision_id}/case", tags=["operator"])
+    def update_case(
+        decision_id: str,
+        update: OperatorCaseUpdate,
+        x_tracelock_operator: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        if x_tracelock_operator != runtime.operator_token:
+            return {"error": "operator_unauthorized"}
+        try:
+            record = evidence.update_case(
+                decision_id,
+                case_status=update.case_status,
+                operator_id="local-operator",
+                operator_note=update.operator_note,
+            )
+        except ValueError as error:
+            return {"error": str(error)}
+        if record is None:
+            return {"error": "evidence_not_found"}
+        return record.as_dict()
 
     @app.get("/v1/boundary-events", tags=["boundary"])
     def boundary_events() -> dict[str, Any]:
@@ -329,6 +395,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 operation=request.operation,
             )
         )
+        evidence.record(result)
         return result.as_dict()
 
     return app

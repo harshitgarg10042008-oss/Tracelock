@@ -21,11 +21,10 @@ def test_gateway_reports_enforced_boundary_mode() -> None:
 
     body = client.get("/v1/status").json()
     assert body["capabilities"]["network_enforcement"] is True
-    assert body["boundary"] == {
-        "mode": "gateway-only-egress-topology",
-        "direct_bypass": "denied-by-network-policy",
-        "event_count": 0,
-    }
+    assert body["boundary"]["mode"] == "gateway-only-egress-topology"
+    assert body["boundary"]["direct_bypass"] == "denied-by-network-policy"
+    assert body["boundary"]["event_count"] == 0
+    assert body["boundary"]["evidence_count"] == 0
 
 
 def test_boundary_event_store_never_requires_payload_values() -> None:

@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 8 — redaction and transformed re-evaluation.**
+**Current phase: Phase 9 — durable evidence and operator workflows.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -54,6 +54,7 @@ Classification is sticky: renaming a field, wrapping it in an array, batching re
 tracelock/
 ├── .github/workflows/       # Continuous integration
 ├── docs/                    # Architecture, scope, and decision records
+├── evidence/                # Reserved durable evidence storage boundary
 ├── infra/docker/            # Local container image definition
 ├── policies/                # Typed example policies and test fixtures
 ├── scripts/                 # Local development and bypass helpers
@@ -76,9 +77,9 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 8 implementation
+## Phase 9 implementation
 
-Phase 8 extends the signed deterministic policy evaluator with controlled redaction. When a policy returns `redact`, TraceLock omits fields outside the permitted set, validates the transformed JSON body, reclassifies it, and evaluates policy again before receiver release. The final decision includes the original and final body hashes, redacted field paths, transformation type, and final matched policy rule without returning either payload.
+Phase 9 adds durable privacy-safe evidence around the Phase 8 gateway. Every HTTP gateway decision is stored in SQLite with hashes, classifications, policy references, transformation references, receiver evidence, and operator case state. Raw payloads and credentials are structurally excluded.
 
 The gateway still uses:
 
@@ -86,7 +87,7 @@ The gateway still uses:
 POST /v1/egress/authorize-and-send
 ```
 
-The provenance manifest is supplied through `X-TraceLock-Provenance`. Unknown transformed fields, invalid transformed bodies, surviving removed values, or denied re-evaluation results fail closed. The Phase 7 identity, destination, receiver, boundary, and policy endpoints remain available.
+Operational views are available through `GET /v1/evidence` and `GET /v1/evidence/{decision_id}`. Controlled case updates use `POST /v1/evidence/{decision_id}/case` and require `X-TraceLock-Operator`. The Phase 8 identity, destination, receiver, boundary, policy, and redaction behavior remain available.
 
 The available endpoints are:
 
@@ -109,7 +110,7 @@ Or start the four-role local topology:
 docker compose -f compose.yaml up --build
 ```
 
-The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, Phase 7 evaluates a signed deterministic policy, and Phase 8 performs safe redaction followed by transformed-payload re-evaluation. Durable evidence, policy governance, and production security guarantees remain future work.
+The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, Phase 7 evaluates a signed deterministic policy, Phase 8 performs safe redaction followed by transformed-payload re-evaluation, and Phase 9 persists privacy-safe evidence with searchable operator workflows. Full dashboards, retention, governance, and production security guarantees remain future work.
 
 Verify direct bypass denial after starting Compose:
 
@@ -119,9 +120,9 @@ docker compose -f compose.yaml exec workload python scripts/check_direct_bypass.
 
 A connection error is the expected result. A successful connection indicates that the local boundary has failed.
 
-## Phase 8 exit criteria
+## Phase 9 exit criteria
 
-Phase 8 is complete when:
+Phase 9 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -153,11 +154,14 @@ Phase 8 is complete when:
 - Transformed payloads are validated and reclassified before release.
 - Transformed payloads are evaluated with transformed-state policy rules.
 - Original and final hashes, redacted paths, and transformation types are recorded without payload leakage.
+- Gateway decisions are durably recorded in SQLite.
+- Evidence search is bounded and filterable.
+- Operator case updates require the configured operator credential and use controlled states.
 - Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 8
+## Explicit non-goals for Phase 9
 
-Phase 8 does not implement policy approval workflows, asymmetric signing, policy distribution and rollback, format-preserving masking, tokenization, cryptographic deletion proofs, durable transformation lineage, streaming transformations, a complete external policy-file parser, durable evidence, retries, idempotency, real downstream HTTP transport, response inspection, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
+Phase 9 does not implement a full web dashboard, role-based access control, tamper-evident evidence chaining, external database deployment, retention policies, export workflows, alert routing, policy approval workflows, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
 
 ## Local development
 
