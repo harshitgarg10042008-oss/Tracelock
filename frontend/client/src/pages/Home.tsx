@@ -57,7 +57,7 @@ const demoEvidence: Evidence[] = [
   { id: "dec-7e88", action: "BLOCK", reason: "direct bypass detected", workload: "unknown-workload", destination: "external-webhook", time: "8 min ago", tone: "red", detail: "request never entered the enforced gateway path" },
 ];
 
-const apiBase = import.meta.env.VITE_TRACELOCK_API_URL || "http://localhost:8000";
+const apiBase = typeof window !== "undefined" ? window.localStorage.getItem("tracelock-api-url") || import.meta.env.VITE_TRACELOCK_API_URL || "http://localhost:8000" : import.meta.env.VITE_TRACELOCK_API_URL || "http://localhost:8000";
 
 function StatusDot({ tone = "lime" }: { tone?: Tone }) {
   return <span className={`status-dot status-${tone}`} aria-hidden="true" />;
@@ -182,7 +182,7 @@ function AdminView() {
 }
 
 function SettingsView() {
-  const [apiUrl, setApiUrl] = useState(apiBase); const [saved, setSaved] = useState(false); const save = () => { localStorage.setItem("tracelock-api-url", apiUrl); setSaved(true); };
+  const [apiUrl, setApiUrl] = useState(apiBase); const [saved, setSaved] = useState(false); const save = () => { localStorage.setItem("tracelock-api-url", apiUrl.replace(/\/$/, "")); setSaved(true); };
   return <section className="service-view"><div className="service-hero"><div><div className="eyebrow lime-text"><span className="signal-line" /> Control Center configuration</div><h1>Settings</h1><p>Keep the dashboard pointed at the gateway you want to observe. This setting changes the frontend target only.</p></div><div className="api-pill"><StatusDot /> Local operator</div></div><div className="panel settings-card"><span className="eyebrow">Gateway connection</span><h2>API base URL</h2><div className="settings-row"><input value={apiUrl} onChange={(event) => { setApiUrl(event.target.value); setSaved(false); }} /><button className="button button-primary" onClick={save}>Save target</button></div>{saved && <div className="simulation-result"><StatusDot /><span>Saved locally. Reload the page to use the new target.</span></div>}<div className="settings-note"><Info size={16} /><span>Use the Docker Compose default `http://localhost:8000` unless you are connecting to another TraceLock environment.</span></div></div></section>;
 }
 
@@ -193,15 +193,32 @@ export default function Home() {
   const [mobileNav, setMobileNav] = useState(false);
   const [lastRefresh, setLastRefresh] = useState("just now");
   const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
+  const [recentEvidence, setRecentEvidence] = useState<Evidence[]>(demoEvidence);
 
   useEffect(() => {
     Promise.all([
       fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(1600) }),
       fetch(`${apiBase}/v1/status`, { signal: AbortSignal.timeout(2200) }),
+      fetch(`${apiBase}/v1/evidence?limit=4`, { signal: AbortSignal.timeout(2500) }),
     ])
-      .then(async ([healthResponse, statusResponse]) => {
+      .then(async ([healthResponse, statusResponse, evidenceResponse]) => {
         setApiOnline(healthResponse.ok);
         if (statusResponse.ok) setLiveStatus(await statusResponse.json());
+        if (evidenceResponse.ok) {
+          const body = await evidenceResponse.json();
+          if (Array.isArray(body.records) && body.records.length > 0) {
+            setRecentEvidence(body.records.map((record: Record<string, unknown>, index: number) => ({
+              id: String(record.decision_id ?? `record-${index}`),
+              action: String(record.action ?? "UNKNOWN").toUpperCase(),
+              reason: String(record.reason_code ?? "policy decision"),
+              workload: String(record.workload_id ?? "unknown"),
+              destination: String(record.destination_id ?? "unknown"),
+              time: String(record.created_at ?? record.timestamp ?? "recent"),
+              tone: String(record.action).toLowerCase() === "block" ? "red" : String(record.action).toLowerCase() === "redact" ? "amber" : "lime",
+              detail: "Evidence details are available in the review drawer.",
+            })));
+          }
+        }
       })
       .catch(() => setApiOnline(false));
   }, [lastRefresh]);
@@ -247,7 +264,7 @@ export default function Home() {
 
           <section className="metrics-grid"><Metric label="Boundary events" value={`${eventCount}`} note="reported by gateway" icon={Activity} /><Metric label="Evidence records" value={`${evidenceCount}`} note={evidenceReady ? "durable store ready" : "store status unavailable"} tone={evidenceReady ? "lime" : "amber"} icon={ShieldCheck} /><Metric label="Governance posture" value={liveStatus ? (governanceValid ? "VALID" : "CHECK") : "—"} note="derived from /v1/status" tone={governanceValid ? "lime" : "amber"} icon={CircleAlert} /><Metric label="Policy engine" value={liveStatus ? (capabilities.deterministic_policy ? "READY" : "CHECK") : "—"} note="deterministic evaluation" tone={capabilities.deterministic_policy ? "lime" : "amber"} icon={Gauge} /></section>
 
-          <section className="lower-grid"><div className="panel evidence-panel"><div className="panel-heading compact"><div><span className="eyebrow">Decision ledger</span><h2>Recent enforcement signals</h2></div><button className="text-button" onClick={() => setActiveNav("Decision ledger")}>View ledger <ArrowUpRight size={14} /></button></div><div className="evidence-list">{demoEvidence.map((item) => <EvidenceRow key={item.id} item={item} onSelect={setSelected} />)}</div></div><div className="panel explain-panel"><div className="explain-art"><div className="evidence-art-grid"><img src="/tracelock-logo-mark.svg" alt="TraceLock evidence mark" /></div><div className="art-overlay" /></div><div className="explain-copy"><span className="eyebrow lime-text">Evidence, without leakage</span><h2>Prove the decision<br />without storing the payload.</h2><p>TraceLock records hashes, policy versions, classifications, and receiver receipts. It never needs to put the raw body into your audit trail.</p><button className="text-button" onClick={() => setActiveNav("Decision ledger")}>Explore evidence <ArrowUpRight size={14} /></button></div></div></section>
+          <section className="lower-grid"><div className="panel evidence-panel"><div className="panel-heading compact"><div><span className="eyebrow">Decision ledger</span><h2>Recent enforcement signals</h2></div><button className="text-button" onClick={() => setActiveNav("Decision ledger")}>View ledger <ArrowUpRight size={14} /></button></div><div className="evidence-list">{recentEvidence.map((item) => <EvidenceRow key={item.id} item={item} onSelect={setSelected} />)}</div></div><div className="panel explain-panel"><div className="explain-art"><div className="evidence-art-grid"><img src="/tracelock-logo-mark.svg" alt="TraceLock evidence mark" /></div><div className="art-overlay" /></div><div className="explain-copy"><span className="eyebrow lime-text">Evidence, without leakage</span><h2>Prove the decision<br />without storing the payload.</h2><p>TraceLock records hashes, policy versions, classifications, and receiver receipts. It never needs to put the raw body into your audit trail.</p><button className="text-button" onClick={() => setActiveNav("Decision ledger")}>Explore evidence <ArrowUpRight size={14} /></button></div></div></section>
 
           <section className="bottom-grid"><button className="mini-card" onClick={() => setActiveNav("Policy & provenance")}><div className="mini-icon lime-box"><Fingerprint size={18} /></div><div><span className="eyebrow">Trusted provenance</span><strong>Classification is sticky</strong><p>Renaming or encoding a field cannot quietly lower its sensitivity.</p></div><ArrowUpRight size={16} /></button><button className="mini-card" onClick={() => setActiveNav("Policy & provenance")}><div className="mini-icon amber-box"><Zap size={18} /></div><div><span className="eyebrow">Transformation</span><strong>Redact, reclassify, re-evaluate</strong><p>Allowed transformations are checked again before release.</p></div><ArrowUpRight size={16} /></button><button className="mini-card" onClick={() => setActiveNav("Network boundary")}><div className="mini-icon blue-box"><TerminalSquare size={18} /></div><div><span className="eyebrow">Honest boundary</span><strong>What TraceLock cannot see</strong><p>Traffic outside the enforced gateway path is marked unmonitored.</p></div><ArrowUpRight size={16} /></button></section>
           <footer className="footer"><span>TraceLock Control Center · local demonstration</span><span><StatusDot /> All core controls operational</span></footer>
