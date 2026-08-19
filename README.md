@@ -188,3 +188,25 @@ pytest
 ```
 
 The commands above are intentionally local and deterministic. External services will be introduced only in the phase that requires them.
+
+## Visual frontend
+
+The repository now includes a browser dashboard under `frontend/`. It is the TraceLock Control Center: a visual explanation and operations surface for the gateway, network boundary, policy, provenance, decisions, and evidence.
+
+To run the frontend locally:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm run dev
+```
+
+Open the URL printed by Vite. The dashboard uses a demo snapshot when the backend is unavailable and detects the local gateway automatically at `http://localhost:8000`. To build it for production:
+
+```bash
+cd frontend
+pnpm run check
+pnpm run build
+```
+
+The frontend is intentionally kept separate from the Python gateway so the backend can continue to run through Docker Compose while the dashboard runs through Vite. The dashboard source is in `frontend/client/`; generated dependencies and build output are excluded from version control.
