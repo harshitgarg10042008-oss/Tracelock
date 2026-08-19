@@ -21,8 +21,8 @@ def test_gateway_health_and_metadata() -> None:
     metadata = client.get("/")
     assert metadata.status_code == 200
     assert metadata.json()["role"] == "gateway"
-    assert metadata.json()["phase"] == 8
-    assert metadata.json()["status"] == "redaction-revalidation-gateway"
+    assert metadata.json()["phase"] == 10
+    assert metadata.json()["status"] == "governed-resilient-gateway"
 
 
 def test_status_makes_unimplemented_capabilities_explicit() -> None:
@@ -50,6 +50,8 @@ def test_status_makes_unimplemented_capabilities_explicit() -> None:
         "deterministic_policy": True,
         "redaction": True,
         "transformed_re_evaluation": True,
+        "governance_validation": True,
+        "resilience_readiness": True,
         "persistence": False,
         "policy_evaluation": True,
     }

@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 9 — durable evidence and operator workflows.**
+**Current phase: Phase 10 — governance, resilience, and production operations.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -77,17 +77,11 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 9 implementation
+## Phase 10 implementation
 
-Phase 9 adds durable privacy-safe evidence around the Phase 8 gateway. Every HTTP gateway decision is stored in SQLite with hashes, classifications, policy references, transformation references, receiver evidence, and operator case state. Raw payloads and credentials are structurally excluded.
+Phase 10 adds governance and resilience safeguards around the Phase 9 gateway. Production and staging configurations are validated without exposing secret values, readiness checks verify evidence-store availability, and egress requests are rejected before release when required evidence infrastructure is unavailable.
 
-The gateway still uses:
-
-```text
-POST /v1/egress/authorize-and-send
-```
-
-Operational views are available through `GET /v1/evidence` and `GET /v1/evidence/{decision_id}`. Controlled case updates use `POST /v1/evidence/{decision_id}/case` and require `X-TraceLock-Operator`. The Phase 8 identity, destination, receiver, boundary, policy, and redaction behavior remain available.
+Operational views remain available through `GET /v1/evidence` and `GET /v1/evidence/{decision_id}`. Controlled case updates use `POST /v1/evidence/{decision_id}/case` and require `X-TraceLock-Operator`. Governance status is available through `GET /v1/governance`, and readiness is exposed through `GET /ready`. The Phase 9 evidence, operator, and Phase 8 gateway behavior remain available.
 
 The available endpoints are:
 
@@ -110,7 +104,7 @@ Or start the four-role local topology:
 docker compose -f compose.yaml up --build
 ```
 
-The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, Phase 7 evaluates a signed deterministic policy, Phase 8 performs safe redaction followed by transformed-payload re-evaluation, and Phase 9 persists privacy-safe evidence with searchable operator workflows. Full dashboards, retention, governance, and production security guarantees remain future work.
+The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, Phase 4 verifies workload identity and registered destinations, Phase 5 proves bounded pre-send release control, Phase 6 enforces trusted provenance with sticky classification, Phase 7 evaluates a signed deterministic policy, Phase 8 performs safe redaction followed by transformed-payload re-evaluation, Phase 9 persists privacy-safe evidence with searchable operator workflows, and Phase 10 validates governance and readiness before release. Full dashboards, retention, distributed resilience, and production security guarantees remain future work.
 
 Verify direct bypass denial after starting Compose:
 
@@ -120,9 +114,9 @@ docker compose -f compose.yaml exec workload python scripts/check_direct_bypass.
 
 A connection error is the expected result. A successful connection indicates that the local boundary has failed.
 
-## Phase 9 exit criteria
+## Phase 10 exit criteria
 
-Phase 9 is complete when:
+Phase 10 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -157,11 +151,15 @@ Phase 9 is complete when:
 - Gateway decisions are durably recorded in SQLite.
 - Evidence search is bounded and filterable.
 - Operator case updates require the configured operator credential and use controlled states.
+- Production and staging defaults fail governance validation when unsafe.
+- Strong production configuration passes governance validation.
+- Readiness fails closed when governance or evidence storage is unavailable.
+- Operational errors expose only safe type-level information.
 - Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 9
+## Explicit non-goals for Phase 10
 
-Phase 9 does not implement a full web dashboard, role-based access control, tamper-evident evidence chaining, external database deployment, retention policies, export workflows, alert routing, policy approval workflows, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
+Phase 10 does not implement multi-instance coordination, distributed locks, database failover, secret-manager integration, asymmetric key rotation, formal change approval, retention enforcement, alert routing, a full web dashboard, or production identity-provider integration. Those capabilities are deliberately deferred to later phases.
 
 ## Local development
 

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Header
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from tracelock_core.contracts import Classification
@@ -17,6 +17,7 @@ from .boundary import BoundaryEventStore
 from .destinations import DestinationRegistry, RegisteredDestination
 from .evidence import EvidenceStore
 from .gateway import Gateway, GatewayRequest, InMemoryReceiverTransport
+from .governance import OperationalState, validate_runtime_config
 from .identity import WorkloadCredentialVerifier
 from .policy import (
     PolicyAction,
@@ -207,6 +208,8 @@ def _default_policy(signing_key: str) -> PolicyBundle:
 
 def create_app(config: ServiceConfig | None = None) -> FastAPI:
     runtime = config or ServiceConfig.from_environment()
+    governance = validate_runtime_config(runtime)
+    operations = OperationalState()
     events = BoundaryEventStore()
     evidence = EvidenceStore(runtime.evidence_db_path)
     destinations = DestinationRegistry(_default_destinations())
@@ -239,6 +242,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         description="Runtime data-flow authorization gateway.",
     )
     app.state.config = runtime
+    app.state.governance = governance
+    app.state.operations = operations
     app.state.boundary_events = events
     app.state.evidence_store = evidence
     app.state.destination_registry = destinations
@@ -255,8 +260,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "role": runtime.service_role,
             "environment": runtime.environment,
             "version": runtime.version,
-            "phase": 8,
-            "status": "redaction-revalidation-gateway",
+            "phase": 10,
+            "status": "governed-resilient-gateway",
         }
 
     @app.get("/health", tags=["service"])
@@ -276,8 +281,10 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "sticky_classification": True,
             "deterministic_policy": True,
             "redaction": True,
-            "transformed_re_evaluation": True,
-            "gateway_vertical_slice": True,
+                "transformed_re_evaluation": True,
+                "governance_validation": True,
+                "resilience_readiness": True,
+                "gateway_vertical_slice": True,
                 "receiver_evidence": True,
                 "persistence": False,
                 "policy_evaluation": True,
@@ -286,7 +293,28 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 "mode": "gateway-only-egress-topology",
                 "direct_bypass": "denied-by-network-policy",
                 "event_count": len(events.list()),
-                "evidence_count": len(evidence.search(limit=200)),
+                "evidence_count": evidence.count(),
+                "governance_valid": governance.valid,
+                "evidence_ready": evidence.health_check(),
+            },
+        }
+
+    @app.get("/ready", tags=["service"])
+    def readiness() -> dict[str, Any]:
+        evidence_ready = evidence.health_check()
+        ready = governance.valid and evidence_ready
+        if not ready:
+            raise HTTPException(status_code=503, detail="service_not_ready")
+        return {"status": "ready", "governance": governance.as_dict()}
+
+    @app.get("/v1/governance", tags=["governance"])
+    def governance_status() -> dict[str, Any]:
+        return {
+            "governance": governance.as_dict(),
+            "operations": operations.as_dict(),
+            "evidence": {
+                "ready": evidence.health_check(),
+                "record_count": evidence.count(),
             },
         }
 
@@ -381,6 +409,10 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         token = ""
         if authorization and authorization.lower().startswith("bearer "):
             token = authorization[7:].strip()
+        if not evidence.health_check():
+            raise HTTPException(status_code=503, detail="evidence_store_unavailable")
+        if governance.strict and not governance.valid:
+            raise HTTPException(status_code=503, detail="governance_configuration_invalid")
         result = gateway.authorize_and_send(
             GatewayRequest(
                 request_id=request.request_id,
@@ -395,7 +427,12 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 operation=request.operation,
             )
         )
-        evidence.record(result)
+        try:
+            evidence.record(result)
+        except Exception as error:
+            operations.evidence_failed(error)
+            raise HTTPException(status_code=503, detail="evidence_persistence_failed") from error
+        operations.evidence_succeeded()
         return result.as_dict()
 
     return app

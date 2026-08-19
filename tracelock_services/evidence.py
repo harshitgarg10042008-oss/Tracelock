@@ -121,6 +121,15 @@ class EvidenceStore:
         )
         self._connection.commit()
 
+    def health_check(self) -> bool:
+        """Verify the evidence database can execute a harmless query."""
+        try:
+            with self._lock:
+                self._connection.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
+
     def record(self, decision: GatewayDecision) -> EvidenceRecord:
         record = EvidenceRecord(
             decision_id=decision.decision_id,
@@ -160,6 +169,11 @@ class EvidenceStore:
             )
             self._connection.commit()
         return record
+
+    def count(self) -> int:
+        with self._lock:
+            row = self._connection.execute("SELECT COUNT(*) FROM evidence").fetchone()
+        return int(row[0]) if row else 0
 
     def get(self, decision_id: str) -> EvidenceRecord | None:
         with self._lock:
