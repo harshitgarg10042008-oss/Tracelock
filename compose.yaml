@@ -11,7 +11,10 @@ services:
       TRACELOCK_ENVIRONMENT: local
     ports:
       - "8000:8000"
-    networks: [tracelock]
+    networks:
+      - workload-path
+      - egress-path
+      - control-path
 
   workload:
     build:
@@ -21,7 +24,10 @@ services:
       TRACELOCK_SERVICE_NAME: analytics-workload
       TRACELOCK_SERVICE_ROLE: workload
       TRACELOCK_ENVIRONMENT: local
-    networks: [tracelock]
+    networks:
+      - workload-path
+    depends_on:
+      - gateway
 
   control-plane:
     build:
@@ -31,7 +37,10 @@ services:
       TRACELOCK_SERVICE_NAME: tracelock-control-plane
       TRACELOCK_SERVICE_ROLE: control-plane
       TRACELOCK_ENVIRONMENT: local
-    networks: [tracelock]
+    networks:
+      - control-path
+    depends_on:
+      - gateway
 
   fake-destination:
     build:
@@ -41,8 +50,15 @@ services:
       TRACELOCK_SERVICE_NAME: external-webhook
       TRACELOCK_SERVICE_ROLE: fake-destination
       TRACELOCK_ENVIRONMENT: local
-    networks: [tracelock]
+    networks:
+      - egress-path
+    depends_on:
+      - gateway
 
 networks:
-  tracelock:
-    driver: bridge
+  workload-path:
+    internal: true
+  egress-path:
+    internal: true
+  control-path:
+    internal: true

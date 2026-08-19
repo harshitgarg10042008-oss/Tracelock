@@ -21,8 +21,8 @@ def test_gateway_health_and_metadata() -> None:
     metadata = client.get("/")
     assert metadata.status_code == 200
     assert metadata.json()["role"] == "gateway"
-    assert metadata.json()["phase"] == 2
-    assert metadata.json()["status"] == "skeleton"
+    assert metadata.json()["phase"] == 3
+    assert metadata.json()["status"] == "boundary-skeleton"
 
 
 def test_status_makes_unimplemented_capabilities_explicit() -> None:

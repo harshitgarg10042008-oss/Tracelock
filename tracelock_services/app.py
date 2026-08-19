@@ -1,8 +1,4 @@
-"""Local TraceLock service skeleton.
-
-This module intentionally exposes health and metadata only. Authorization,
-network enforcement, persistence, and policy evaluation arrive in later phases.
-"""
+"""Local TraceLock service skeleton with Phase 3 boundary observability."""
 
 from __future__ import annotations
 
@@ -12,6 +8,8 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
+
+from .boundary import BoundaryEventStore
 
 
 @dataclass(frozen=True)
@@ -37,12 +35,14 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
     """Create an isolated application instance for tests or local deployment."""
 
     runtime = config or ServiceConfig.from_environment()
+    events = BoundaryEventStore()
     app = FastAPI(
         title="TraceLock",
         version=runtime.version,
         description="Runtime data-flow authorization service skeleton.",
     )
     app.state.config = runtime
+    app.state.boundary_events = events
 
     @app.get("/", tags=["service"])
     def service_metadata() -> dict[str, Any]:
@@ -51,8 +51,8 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "role": runtime.service_role,
             "environment": runtime.environment,
             "version": runtime.version,
-            "phase": 2,
-            "status": "skeleton",
+            "phase": 3,
+            "status": "boundary-skeleton",
         }
 
     @app.get("/health", tags=["service"])
@@ -65,11 +65,22 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
             "service": asdict(runtime),
             "capabilities": {
                 "authorization": False,
-                "network_enforcement": False,
+                "network_enforcement": runtime.service_role == "gateway",
                 "persistence": False,
                 "policy_evaluation": False,
             },
+            "boundary": {
+                "mode": "gateway-only-egress-topology",
+                "direct_bypass": "denied-by-network-policy",
+                "event_count": len(events.list()),
+            },
         }
+
+    @app.get("/v1/boundary-events", tags=["boundary"])
+    def boundary_events() -> dict[str, Any]:
+        """Return local boundary events without raw payloads or credentials."""
+
+        return {"events": [event.as_dict() for event in events.list()]}
 
     return app
 
