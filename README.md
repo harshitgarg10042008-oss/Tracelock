@@ -4,7 +4,7 @@ TraceLock is a runtime data-flow authorization gateway for controlled outbound H
 
 ## Project status
 
-**Current phase: Phase 3 — enforced network boundary.**
+**Current phase: Phase 4 — workload identity and destination registration.**
 
 This repository is being developed incrementally. Each phase must have a defined scope, automated checks, and an explicit exit review before the next phase begins.
 
@@ -60,7 +60,7 @@ tracelock/
 ├── services/                # Reserved service deployment boundaries
 ├── tests/                   # Unit and integration tests
 ├── tracelock_core/          # Framework-independent domain contracts
-├── tracelock_services/      # Runnable local FastAPI service skeleton
+├── tracelock_services/      # Runnable local FastAPI service and security checks
 ├── compose.yaml             # Local multi-service topology
 ├── pyproject.toml           # Python project metadata and tool configuration
 └── README.md                # Project charter and development guide
@@ -76,11 +76,17 @@ TraceLock follows five non-negotiable principles:
 4. **Evidence without leakage:** standard logs and decision records never contain raw payloads, credentials, or sensitive values.
 5. **Honest boundaries:** the system never claims to protect traffic that bypasses the enforced gateway path.
 
-## Phase 3 implementation
+## Phase 4 implementation
 
-Phase 3 provides a gateway-only local egress topology for the four explicit roles: `gateway`, `workload`, `control-plane`, and `fake-destination`. The workload shares only an internal path with the gateway. The gateway is the only service attached to the destination egress network, so the workload cannot directly connect to the fake destination.
+Phase 4 keeps the gateway-only local egress topology and adds two security gates: signed workload credential verification and registered destination validation. Workload credentials must have a valid issuer, audience, subject, workload binding, expiry, issued-at time, and non-revoked token ID. Requested destinations must match a registered scheme, host, port, path, TLS requirement, and safe resolved network address.
 
-The service exposes a privacy-preserving `GET /v1/boundary-events` endpoint for local boundary-event inspection. The event store is intentionally in-memory until durable evidence is implemented in a later phase.
+The service exposes identity and destination endpoints for local development:
+
+- `POST /v1/identity/verify`
+- `GET /v1/destinations`
+- `POST /v1/destinations/validate`
+
+The existing privacy-preserving `GET /v1/boundary-events` endpoint remains available. These checks do not yet authorize or release outbound payloads; that is the Phase 5 gateway vertical slice.
 
 The available endpoints are:
 
@@ -103,7 +109,7 @@ Or start the four-role local topology:
 docker compose -f compose.yaml up --build
 ```
 
-The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, but it does not yet authorize traffic, proxy outbound requests, verify workload identity, persist events, evaluate policies, or provide production security guarantees.
+The gateway is exposed at `http://localhost:8000`. The Phase 3 topology enforces local workload-to-destination separation, and Phase 4 verifies workload identity and registered destinations. The system does not yet proxy or authorize outbound payloads, persist events, evaluate policies, or provide production security guarantees.
 
 Verify direct bypass denial after starting Compose:
 
@@ -113,9 +119,9 @@ docker compose -f compose.yaml exec workload python scripts/check_direct_bypass.
 
 A connection error is the expected result. A successful connection indicates that the local boundary has failed.
 
-## Phase 3 exit criteria
+## Phase 4 exit criteria
 
-Phase 3 is complete when:
+Phase 4 is complete when:
 
 - A fresh clone contains the documented repository structure.
 - The Python package can be installed in editable mode.
@@ -130,11 +136,13 @@ Phase 3 is complete when:
 - The gateway is attached to both workload and egress paths.
 - Boundary events never require raw payload values.
 - Direct-bypass tests pass.
+- Workload credentials reject invalid issuer, audience, expiry, workload, and revoked-token conditions.
+- Destinations reject unknown identities, unsafe addresses, invalid paths, and non-TLS URLs.
 - Service skeleton integration tests pass.
 
-## Explicit non-goals for Phase 3
+## Explicit non-goals for Phase 4
 
-Phase 3 does not implement workload identity verification, gateway proxying, destination registration, a database, a dashboard, policy signing, production provenance integrations, or redaction. Those capabilities are deliberately deferred to later phases.
+Phase 4 does not implement a live identity provider, asymmetric key rotation, gateway proxying, policy authorization, a database, a dashboard, policy signing, production provenance integrations, or redaction. Those capabilities are deliberately deferred to later phases.
 
 ## Local development
 
