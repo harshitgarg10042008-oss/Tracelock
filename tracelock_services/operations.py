@@ -37,6 +37,9 @@ class OperationsStore:
             "viewer": TeamMember("viewer", "viewer", "TraceLock Viewer"),
         }
         self.incidents: dict[str, Incident] = {}
+        self.saved_investigations: dict[str, dict[str, Any]] = {}
+        self.alert_rules: dict[str, dict[str, Any]] = {}
+        self.event_sequence = 0
         self.destinations: dict[str, dict[str, Any]] = {}
         self.identities: dict[str, dict[str, Any]] = {
             "analytics-workload": {
@@ -78,3 +81,7 @@ class OperationsStore:
 
     def incident_for(self, decision_id: str) -> Incident:
         return self.incidents.setdefault(decision_id, Incident(f"inc_{uuid4().hex}", decision_id))
+
+    def next_event(self) -> int:
+        self.event_sequence += 1
+        return self.event_sequence

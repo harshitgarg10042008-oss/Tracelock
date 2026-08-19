@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -11,6 +13,7 @@ from uuid import uuid4
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from tracelock_core.contracts import Classification
@@ -110,6 +113,18 @@ class ScenarioRequest(BaseModel):
 
 class DestinationManagementRequest(BaseModel):
     destination_id: str
+    enabled: bool = True
+
+
+class InvestigationRequest(BaseModel):
+    name: str
+    filters: dict[str, Any] = {}
+
+
+class AlertRuleRequest(BaseModel):
+    name: str
+    event_type: str
+    threshold: int = 1
     enabled: bool = True
 
 
@@ -534,6 +549,98 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
         incident.updated_at = datetime.now(UTC).isoformat()
         return incident.as_dict()
 
+    @app.get("/v1/events/stream", tags=["operations"])
+    async def event_stream(authorization: str | None = Header(default=None)) -> StreamingResponse:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+
+        async def generate() -> Any:
+            last = team_operations.event_sequence
+            while True:
+                if team_operations.event_sequence != last:
+                    last = team_operations.event_sequence
+                    yield f"event: decision\\ndata: {json.dumps({'sequence': last})}\\n\\n"
+                else:
+                    yield f"event: heartbeat\\ndata: {json.dumps({'sequence': last})}\\n\\n"
+                await asyncio.sleep(5)
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/v1/investigations", tags=["operator"])
+    def list_investigations(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+        return {"investigations": list(team_operations.saved_investigations.values())}
+
+    @app.post("/v1/investigations", tags=["operator"])
+    def save_investigation(
+        request: InvestigationRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        team_operations.require_role(member, "admin", "operator")
+        investigation_id = f"inv_{uuid4().hex}"
+        item: dict[str, Any] = {
+            "investigation_id": investigation_id,
+            "name": request.name,
+            "filters": request.filters,
+            "created_by": member.username,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        team_operations.saved_investigations[investigation_id] = item
+        return item
+
+    @app.get("/v1/alerts", tags=["operator"])
+    def list_alerts(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+        return {"alerts": list(team_operations.alert_rules.values())}
+
+    @app.post("/v1/alerts", tags=["operator"])
+    def create_alert(
+        request: AlertRuleRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        team_operations.require_role(member, "admin", "operator")
+        alert_id = f"alert_{uuid4().hex}"
+        item: dict[str, Any] = {
+            "alert_id": alert_id,
+            "name": request.name,
+            "event_type": request.event_type,
+            "threshold": request.threshold,
+            "enabled": request.enabled,
+            "created_by": member.username,
+        }
+        team_operations.alert_rules[alert_id] = item
+        return item
+
+    @app.get("/v1/reports/evidence", tags=["reports"])
+    def evidence_report(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        member = team_operations.member_from_token(authorization, runtime.operator_token)
+        records = evidence.search(limit=500)
+        return {
+            "report_type": "evidence_integrity",
+            "generated_at": datetime.now(UTC).isoformat(),
+            "generated_by": member.username,
+            "record_count": len(records),
+            "records": [record.as_dict() for record in records],
+        }
+
+    @app.post("/v1/evidence/{decision_id}/replay", tags=["evidence"])
+    def replay_evidence(
+        decision_id: str, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        team_operations.member_from_token(authorization, runtime.operator_token)
+        record = evidence.get(decision_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="evidence_not_found")
+        return {
+            "replayed": True,
+            "sent": False,
+            "decision": record.as_dict(),
+            "note": "Replay is inspection-only and never calls a receiver.",
+        }
+
     @app.get("/v1/evidence/{decision_id}", tags=["evidence"])
     def get_evidence(decision_id: str) -> dict[str, Any]:
         record = evidence.get(decision_id)
@@ -636,6 +743,7 @@ def create_app(config: ServiceConfig | None = None) -> FastAPI:
                 operation=request.operation,
             )
         )
+        team_operations.next_event()
         try:
             evidence.record(result)
         except Exception as error:

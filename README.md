@@ -240,3 +240,9 @@ The Control Center now includes a **Traffic Lab** for bounded allow, redact, blo
 The **Team access** page provides local role-aware sessions for the operator console. The development accounts are `admin` / `admin-tracelock-local`, `operator` / `operator-tracelock-local`, and `viewer` / `viewer-tracelock-local`. Use an operator or administrator session for scenario execution and incident-management actions. Replace these development credentials with managed identity integration before production deployment.
 
 The backend exposes authentication and operational routes under `/v1/auth`, `/v1/demo/scenarios`, `/v1/incidents`, and `/v1/identities`. Existing evidence, governance, destination, policy, and boundary endpoints remain available. Raw payloads are not added to evidence exports.
+
+## Roadmap operations
+
+The current roadmap slice adds authenticated Server-Sent Events at `/v1/events/stream`, saved investigations at `/v1/investigations`, alert rules at `/v1/alerts`, inspection-only replay at `/v1/evidence/{decision_id}/replay`, and evidence integrity reports at `/v1/reports/evidence`. Each protected route requires a local bearer session; operator or administrator roles are required for mutations.
+
+The Traffic Lab remains the safe demonstration path. It creates bounded decisions through the real gateway and increments the event stream sequence without calling an external receiver. Replay is deliberately inspection-only. Persistent multi-tenant identity, OAuth/OIDC, MFA, PostgreSQL, billing, external SIEM connectors, and production key management still require deployment infrastructure and credentials beyond this local repository.
