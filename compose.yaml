@@ -15,6 +15,7 @@ services:
     ports:
       - "8000:8000"
     networks:
+      - host-facing
       - workload-path
       - egress-path
       - control-path
@@ -62,6 +63,7 @@ volumes:
   evidence-data:
 
 networks:
+  host-facing: {}
   workload-path:
     internal: true
   egress-path:
